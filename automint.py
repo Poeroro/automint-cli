@@ -214,9 +214,27 @@ def main():
             console.print('[red]Invalid choice[/red]')
             sys.exit(1)
 
+    # ── Step 4.5: Quantity ──
+    max_mint = result.get('maxMint', 0)
+    quantity = 1
+    if max_mint > 1:
+        console.print(f'\n[bold]Quantity:[/bold] Max mint per tx = [cyan]{max_mint}[/cyan]')
+        try:
+            ans = input(f'How many? [1-{max_mint}, enter=1] > ').strip()
+            if ans:
+                q = int(ans)
+                if q < 1 or q > max_mint:
+                    console.print(f'[red]Must be 1-{max_mint}[/red]')
+                    sys.exit(1)
+                quantity = q
+        except (ValueError, EOFError, KeyboardInterrupt):
+            quantity = 1
+        if quantity > 1:
+            console.print(f'[green]→ Minting {quantity} NFTs[/green]')
+
     # ── Step 5: Cost Estimate ──
     console.print('\n[bold]💰 Estimating cost...[/bold]')
-    est = estimate_total_cost(contract, chain, wallet, selected, custom_rpc)
+    est = estimate_total_cost(contract, chain, wallet, selected, custom_rpc, quantity)
     show_cost_estimate(est, currency)
 
     if est.get('error'):
@@ -265,8 +283,9 @@ def main():
             sys.exit(0)
 
     # ── Step 7: Execute ──
-    console.print(f'\n[bold]🚀 Executing mint:[/bold] {selected["name"]} @ {currency} {selected["price"]}')
-    report = execute_mint(contract, chain, tier_data, custom_rpc)
+    qty_note = f' × {quantity}' if quantity > 1 else ''
+    console.print(f'\n[bold]🚀 Executing mint:[/bold] {selected["name"]} @ {currency} {selected["price"]}{qty_note}')
+    report = execute_mint(contract, chain, tier_data, custom_rpc, quantity)
 
     # ── Step 8: Report ──
     show_report(report, chain)

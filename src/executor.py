@@ -52,7 +52,7 @@ def _fmt_duration(secs: int) -> str:
     return f'{h:02d}:{m:02d}:{s:02d}'
 
 
-def execute_mint(contract: str, chain: str, tier: dict, custom_rpc: str = '') -> dict:
+def execute_mint(contract: str, chain: str, tier: dict, custom_rpc: str = '', quantity: int = 1) -> dict:
     """Build tx, sign, send, wait receipt. Return report."""
     rpc = custom_rpc or get_rpc(chain)
     w3 = Web3(Web3.HTTPProvider(rpc))
@@ -73,10 +73,12 @@ def execute_mint(contract: str, chain: str, tier: dict, custom_rpc: str = '') ->
 
     # Build calldata
     method_sig = tier.get('methodSig', '0x1249c58b')
-    price_wei = int(tier.get('price', 0) * 1e18)
+    price_per_unit = tier.get('price', 0)
+    price_wei = int(price_per_unit * quantity * 1e18)
 
-    # Simple mint(uint256) calldata
-    calldata = method_sig + '0' * 63 + '1'
+    # Encode quantity ke uint256 calldata
+    qty_hex = hex(quantity)[2:].zfill(64)
+    calldata = method_sig + qty_hex
 
     # Cek balance dulu
     balance_wei = w3.eth.get_balance(wallet)

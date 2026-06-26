@@ -82,8 +82,27 @@ def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
         'symbol': '',
         'mintPrice': None,
         'startTime': None,
+        'maxMint': 0,
         'tiers': [],
     }
+
+    # Coba dapetin max mint (per-tx / per-wallet)
+    max_selectors = [
+        '0xac5ba77b',  # maxMintAmount
+        '0x3a84b649',  # maxMintPerTx
+        '0xc3c5a547',  # maxPerMint
+        '0x1f2dcdb7',  # maxPerWallet
+    ]
+    for sel in max_selectors:
+        try:
+            resp = w3.eth.call({'to': contract, 'data': sel})
+            if resp and resp != '0x' and len(resp) >= 66:
+                val = int(resp, 16)
+                if val > 0 and val < 1000000:  # wajar
+                    result['maxMint'] = val
+                    break
+        except:
+            pass
 
     # Coba dapetin nama + symbol
     try:

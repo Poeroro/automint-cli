@@ -95,8 +95,8 @@ def check_eligibility(contract: str, chain: str, wallet: str, tiers: list, custo
     return results
 
 
-def estimate_total_cost(contract: str, chain: str, wallet: str, tier: dict, custom_rpc: str = '') -> dict:
-    """Estimasi total cost: mint price + gas."""
+def estimate_total_cost(contract: str, chain: str, wallet: str, tier: dict, custom_rpc: str = '', quantity: int = 1) -> dict:
+    """Estimasi total cost: mint price (× qty) + gas."""
     rpc = custom_rpc or get_rpc(chain)
     w3 = Web3(Web3.HTTPProvider(rpc))
     if not w3.is_connected():
@@ -109,12 +109,15 @@ def estimate_total_cost(contract: str, chain: str, wallet: str, tier: dict, cust
     except:
         return {'error': 'Invalid address'}
 
-    price_wei = int(tier.get('price', 0) * 1e18)
+    price_per_unit = tier.get('price', 0)
+    price_wei = int(price_per_unit * quantity * 1e18)
     method_sig = tier.get('methodSig', '')
     if not method_sig:
         method_sig = '0x1249c58b'
 
-    calldata = method_sig + '0' * 63 + '1'
+    # Encode quantity
+    qty_hex = hex(quantity)[2:].zfill(64)
+    calldata = method_sig + qty_hex
 
     try:
         gas_estimate = w3.eth.estimate_gas({'from': wallet, 'to': contract, 'data': calldata, 'value': hex(price_wei)})

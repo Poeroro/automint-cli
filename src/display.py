@@ -37,6 +37,9 @@ def show_detect_result(data: dict):
     console.print(f'\n[bold]Collection:[/bold] {name}')
     console.print(f'[bold]Contract:[/bold]  [cyan]{contract}[/cyan]')
     console.print(f'[bold]Chain:[/bold]     {chain} (ID: {chain_id})')
+    max_mint = data.get('maxMint', 0)
+    if max_mint:
+        console.print(f'[bold]Max Mint:[/bold]  [cyan]{max_mint}[/cyan] per tx')
     console.print()
 
     tiers = data.get('tiers', [])
