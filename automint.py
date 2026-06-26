@@ -39,7 +39,11 @@ def check_env_file():
         console.print('  [yellow]cp .env.example .env[/yellow]')
         console.print('  [yellow]nano .env[/yellow]')
         console.print()
-        if input('Continue without .env? (hanya contract langsung tanpa OS API) [y/N] > ').strip().lower() != 'y':
+        try:
+            ans = input('Continue without .env? (hanya contract langsung) [y/N] > ').strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            sys.exit(1)
+        if ans != 'y':
             sys.exit(1)
         return
     if os.name == 'posix':
@@ -48,7 +52,11 @@ def check_env_file():
             console.print(f'[red]⚠ .env permission {oct(mode)} — too open! Run:[/red]')
             console.print(f'  [yellow]chmod 600 {env_path}[/yellow]')
             console.print()
-            if input('Continue anyway? [y/N] > ').strip().lower() != 'y':
+            try:
+                ans = input('Continue anyway? [y/N] > ').strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                ans = 'n'
+            if ans != 'y':
                 sys.exit(1)
 
 
@@ -414,11 +422,7 @@ def main():
                 console.print('[yellow]  Proceeding anyway — user bear risk of failed tx[/yellow]')
             elif est['total_wei'] > wallet_info['balance_wei']:
                 console.print(f'\n[red]✕ Insufficient balance! Need {est["total_eth"]:.6f} {currency}[/red]')
-                if args.wallet != '-1':
-                    break
-                if not first_pass:
-                    break
-                continue
+                break
             else:
                 console.print(f'\n[green]✅ Balance sufficient ({wallet_info["balance_eth"]:.6f} >= {est["total_eth"]:.6f})[/green]')
 
@@ -426,7 +430,10 @@ def main():
             gas_params = show_gas_menu(w3, chain)
 
             # Execute
-            do_mint(contract, chain, selected_tier, custom_rpc, quantity, wallet_info, dry_run, currency, gas_params)
+            mint_result = do_mint(contract, chain, selected_tier, custom_rpc, quantity, wallet_info, dry_run, currency, gas_params)
+            if mint_result is None:
+                # Cancelled during countdown
+                break
 
         else:
             console.print('[red]Invalid selection[/red]')

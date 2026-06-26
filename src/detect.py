@@ -64,26 +64,60 @@ def scrape_opensea_collection(slug: str) -> dict:
             return result
 
         html = resp.text
-        chain_addr = re.search(
+
+        # Priority 1: chain → contractAddress (newer OS format)
+        # Priority 2: chain → address (skip 0x0...0)
+        # Priority 3: slug → address → chain (fallback)
+
+        contract = ''
+        raw_chain = 'ethereum'
+        found = False
+
+        # 1: chain object near contractAddress
+        m = re.search(
             r'"chain"\s*:\s*\{[^}]*?"identifier"\s*:\s*"([^"]+)"[^}]*?\}'
-            r'[\s\S]{0,500}?"address"\s*:\s*"(0x[a-fA-F0-9]{40})"',
+            r'[\s\S]{0,300}?"contractAddress"\s*:\s*"(0x[a-fA-F0-9]{40})"',
             html
         )
-        if not chain_addr:
-            chain_addr = re.search(
-                r'"address"\s*:\s*"(0x[a-fA-F0-9]{40})"'
-                r'[\s\S]{0,500}?"chain"\s*:\s*\{[^}]*?"identifier"\s*:\s*"([^"]+)"',
+        if m:
+            raw_chain, addr = m.group(1), m.group(2)
+            if addr != '0x' + '0' * 40:
+                contract, found = addr, True
+
+        # 2: chain object near address (skip zero addr)
+        if not found:
+            m = re.search(
+                r'"chain"\s*:\s*\{[^}]*?"identifier"\s*:\s*"([^"]+)"[^}]*?\}'
+                r'[\s\S]{0,300}?"address"\s*:\s*"(0x[a-fA-F0-9]{40})"',
                 html
             )
-            if chain_addr:
-                contract, raw_chain = chain_addr.group(1), chain_addr.group(2)
-            else:
-                result['error'] = 'Could not find contract + chain in page'
-                return result
-        else:
-            raw_chain, contract = chain_addr.group(1), chain_addr.group(2)
+            if m:
+                raw_chain, addr = m.group(1), m.group(2)
+                if addr != '0x' + '0' * 40:
+                    contract, found = addr, True
 
-        result['contract'] = Web3.to_checksum_address(contract) if contract else ''
+        # 3: slug-based fallback
+        if not found:
+            m = re.search(
+                r'"slug"\s*:\s*"' + re.escape(slug) + r'"'
+                r'[\s\S]{0,500}?"address"\s*:\s*"(0x[a-fA-F0-9]{40})"',
+                html
+            )
+            if m:
+                addr = m.group(1)
+                if addr != '0x' + '0' * 40:
+                    contract = addr
+                    found = True
+                    ctx = m.group(0)
+                    chain_m = re.search(r'"identifier"\s*:\s*"([^"]+)"', ctx)
+                    if chain_m:
+                        raw_chain = chain_m.group(1)
+
+        if not found or not contract:
+            result['error'] = 'Could not find contract + chain in page'
+            return result
+
+        result['contract'] = Web3.to_checksum_address(contract)
         result['chain'] = OS_CHAIN_MAP.get(raw_chain.lower(), raw_chain.lower())
         return result
 

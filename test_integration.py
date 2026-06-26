@@ -20,24 +20,31 @@ def check(name, cond, detail=""):
         print(f"  ❌ {name} — {detail}")
         errors += 1
 
-# ── check_env_file ──
-# Should not raise when .env exists with 600
+# ── check_env_file: .env exists ──
 try:
     automint.check_env_file()
     check("check_env_file(600): no exception", True)
+except SystemExit:
+    check("check_env_file(600): unexpected exit", False)
 except Exception as e:
     check("check_env_file(600): no exception", False, str(e))
 
-# .env doesn't exist
-import os as _os
-saved_cwd = _os.getcwd()
-_os.chdir("/tmp")
+# ── check_env_file: no .env → exit ──
+saved_env = '.env'
+renamed = False
+if os.path.exists(saved_env):
+    os.rename(saved_env, saved_env + '.bak')
+    renamed = True
 try:
     automint.check_env_file()
-    check("check_env_file(no .env): no exception", True)
+    check("check_env_file(no .env): should exit", False)
+except SystemExit:
+    check("check_env_file(no .env): exit correctly", True)
 except Exception as e:
-    check("check_env_file(no .env): no exception", False, str(e))
-_os.chdir(saved_cwd)
+    check("check_env_file(no .env): exit not exception", False, str(e))
+finally:
+    if renamed:
+        os.rename(saved_env + '.bak', saved_env)
 
 # ── verify_chain_id ──
 rpc = CHAINS['ethereum']['rpc']
@@ -51,14 +58,13 @@ try:
 except Exception as e:
     check("verify_chain_id: no exception", False, str(e))
 
-# Unknown chain — should return True (skip)
+# Unknown chain
 try:
     result = automint.verify_chain_id(w3, 'nonexistent')
     check("verify_chain_id(unknown chain): returns True", result is True)
 except Exception as e:
     check("verify_chain_id(unknown chain): no exception", False, str(e))
 
-# Mismatch case via mock — not possible without RPC, check function structure
 check("verify_chain_id has chain_id check", 'chain_id' in automint.verify_chain_id.__code__.co_names)
 
 # ── append_log ──
@@ -74,7 +80,6 @@ test_entry = {
 try:
     automint.append_log(test_entry)
     check("append_log: no exception", True)
-    # Verify file exists and has content
     log_path = 'automint.log'
     if os.path.exists(log_path):
         with open(log_path) as f:
@@ -90,29 +95,25 @@ try:
 except Exception as e:
     check("append_log: no exception", False, str(e))
 
-# append_log: silent fail (no crash) on bad path
+# append_log: no crash
 try:
-    automint.append_log({'test': 'data'})  # will work
+    automint.append_log({'test': 'data'})
     check("append_log(any dict): no crash", True)
 except Exception as e:
     check("append_log(any dict): no crash", False, str(e))
 
-# ── main flow simulation ──
-# Test that parse_args works
-import argparse
+# ── parse_args ──
 try:
-    # Simulate command-line args
     sys.argv = ['automint.py', '--help']
     try:
         automint.parse_args()
     except SystemExit:
-        pass  # expected for --help
+        pass  # expected
     check("parse_args: --help exits gracefully", True)
 except Exception as e:
     check("parse_args: --help exits gracefully", False, str(e))
 
-# ── KeyboardInterrupt handling ──
-# The main() function has a try/except around it — verify the code exists
+# ── main guard ──
 with open('automint.py') as f:
     content = f.read()
 check("main(): has KeyboardInterrupt handler", 'KeyboardInterrupt' in content)
