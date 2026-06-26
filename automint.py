@@ -3,10 +3,11 @@
 """AutoMint CLI — NFT Minter Terminal.
 
 Usage:
-  automint --url https://opensea.io/collection/...
-  automint --contract 0x... --chain eth [--rpc https://...] [--dry-run]
+  automint                           # interactive — masukin URL/contract
+  automint --url https://...         # langsung dari URL
+  automint --contract 0x... --chain eth [--rpc ...] [--dry-run]
 
-Flow: detect → eligibility → pilih tier → countdown → execute → report
+Flow: input → detect → eligibility → pilih tier → countdown → execute → report
 """
 
 import sys, os, time, argparse, json, stat
@@ -46,11 +47,11 @@ def verify_chain_id(w3: Web3, chain: str) -> bool:
     """Cek chainId RPC cocok dengan chain yg dipilih."""
     expected = CHAINS.get(chain, {}).get('id')
     if not expected:
-        return True  # unknown chain, skip
+        return True
     try:
         actual = w3.eth.chain_id
     except:
-        return True  # gak bisa verify, skip
+        return True
     if actual != expected:
         console.print(f'[red]✕ Chain mismatch! RPC chainId={actual}, expected {chain}(id={expected})[/red]')
         console.print('[yellow]  Dana bisa hilang kalo lanjut![/yellow]')
@@ -64,19 +65,56 @@ def append_log(entry: dict):
         with open(LOG_FILE, 'a') as f:
             f.write(json.dumps(entry) + '\n')
     except:
-        pass  # silent fail — gak kritikal
+        pass
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description='AutoMint CLI — NFT Minter Terminal')
-    g = p.add_mutually_exclusive_group(required=True)
-    g.add_argument('--url', help='OpenSea collection URL')
-    g.add_argument('--contract', help='NFT contract address (0x...)')
+    p = argparse.ArgumentParser(
+        description='AutoMint CLI — NFT Minter Terminal',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Contoh:
+  automint                          → interaktif, masukin URL/contract
+  automint --url https://opensea.io/collection/...
+  automint --contract 0x... --chain eth --dry-run
+        """
+    )
+    p.add_argument('--url', help='OpenSea collection URL')
+    p.add_argument('--contract', help='NFT contract address (0x...)')
     p.add_argument('--chain', default='', help='Chain: eth/base/op/arb/polygon/bsc')
     p.add_argument('--rpc', default='', help='Custom RPC URL (override env/default)')
-    p.add_argument('--wallet', type=int, default=0, help='Wallet index (multi-key dari env)')
     p.add_argument('--dry-run', action='store_true', help='Detect + estimate only, no mint')
-    return p.parse_args()
+    args, _ = p.parse_known_args()
+    return args
+
+
+def prompt_input(args):
+    """Kalo gak ada --url / --contract, minta input dari user."""
+    url_or_contract = args.url or args.contract
+    if url_or_contract:
+        return url_or_contract, args.chain, args.rpc, args.dry_run
+
+    console.print()
+    console.print('[bold]Target NFT[/bold]')
+    console.print('  Paste [cyan]OpenSea URL[/cyan] atau [cyan]contract address[/cyan] (0x...)')
+    val = input('> ').strip()
+    while not val:
+        val = input('> ').strip()
+
+    chain = args.chain
+    if not chain:
+        c = input('Chain [eth/base/op/arb/polygon/bsc, enter=eth] > ').strip().lower()
+        if c:
+            chain = c
+
+    rpc = args.rpc
+
+    dry_run = args.dry_run
+    if not dry_run:
+        ans = input('Dry-run only? (cek doang, gak mint) [y/N] > ').strip().lower()
+        dry_run = ans == 'y'
+
+    return val, chain, rpc, dry_run
 
 
 def main():
@@ -96,13 +134,14 @@ def main():
     args = parse_args()
     show_banner()
 
-    # ── Step 1: Detect ──
-    input_str = args.url or args.contract
-    chain_hint = resolve_chain(args.chain) or 'ethereum'
-    if args.chain and not resolve_chain(args.chain):
-        console.print(f'[yellow]⚠ Unknown chain "{args.chain}" — defaulting to ethereum[/yellow]')
-    custom_rpc = args.rpc
+    # ── Step 0: Input ──
+    input_str, chain_hint_raw, custom_rpc, dry_run = prompt_input(args)
 
+    chain_hint = resolve_chain(chain_hint_raw) or 'ethereum'
+    if chain_hint_raw and not resolve_chain(chain_hint_raw):
+        console.print(f'[yellow]⚠ Unknown chain "{chain_hint_raw}" — defaulting to ethereum[/yellow]')
+
+    # ── Step 1: Detect ──
     console.print(f'\n[bold]🔍 Detecting:[/bold] {input_str[:60]}...')
     result = detect(input_str, chain_hint, custom_rpc)
 
@@ -110,7 +149,6 @@ def main():
         console.print(f'[red]✕ {result["error"]}[/red]')
         sys.exit(1)
 
-    # Tampilkan warning (OS API key dll)
     if result.get('warning'):
         console.print(f'[yellow]⚠ {result["warning"]}[/yellow]')
 
@@ -125,7 +163,7 @@ def main():
         console.print('[yellow]No tiers detected. Cannot proceed.[/yellow]')
         sys.exit(1)
 
-    # ── Step 1.5: ChainId validation ──
+    # ── Step 1.5: RPC + ChainId ──
     rpc = custom_rpc or get_rpc(chain)
     w3 = Web3(Web3.HTTPProvider(rpc))
     if not w3.is_connected():
@@ -154,7 +192,6 @@ def main():
     elig_results = check_eligibility(contract, chain, wallet, tiers, custom_rpc)
     show_eligibility(elig_results, wallet, balance_eth, currency)
 
-    # Filter eligible
     eligible_tiers = [t for t in elig_results if t['eligible']]
     if not eligible_tiers:
         console.print('[red]✕ Wallet not eligible for any tier[/red]')
@@ -185,14 +222,13 @@ def main():
     if est.get('error'):
         sys.exit(1)
 
-    # Cek balance
     if est['total_wei'] > balance_wei:
         console.print(f'\n[red]✕ Insufficient balance! Need {est["total_eth"]:.6f} {currency}, have {balance_eth:.6f} {currency}[/red]')
         sys.exit(1)
     else:
         console.print(f'\n[green]✅ Balance sufficient ({balance_eth:.6f} >= {est["total_eth"]:.6f})[/green]')
 
-    if args.dry_run:
+    if dry_run:
         console.print('\n[yellow]── Dry-run mode — exiting ──[/yellow]')
         sys.exit(0)
 
@@ -227,8 +263,6 @@ def main():
         if ans != 'y':
             console.print('[dim]Cancelled. Exiting.[/dim]')
             sys.exit(0)
-    else:
-        console.print(f'[yellow]Tier status: {status} — proceeding with caution[/yellow]')
 
     # ── Step 7: Execute ──
     console.print(f'\n[bold]🚀 Executing mint:[/bold] {selected["name"]} @ {currency} {selected["price"]}')
