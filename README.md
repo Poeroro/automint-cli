@@ -47,10 +47,10 @@ Gak perlu ribet. Tinggal `automint` → paste URL → enter → selesai.
 ## Install
 
 ```bash
-# Clone repo (SSH — butuh key github)
-git clone git@github.com:Poeroro/automint-cli.git
-# Atau HTTPS (gak perlu setup SSH)
+# Clone repo — HTTPS recommended (gak perlu setup SSH)
 git clone https://github.com/Poeroro/automint-cli.git
+# Atau SSH kalo udah setup key
+# git clone git@github.com:Poeroro/automint-cli.git
 cd automint-cli
 
 # Buat virtual environment
@@ -70,11 +70,15 @@ python -m pip install -r requirements.txt
 ## Setup `.env`
 
 ```bash
-# Copy template
+# Linux/Mac: copy template
 cp .env.example .env
 
-# Edit .env
-nano .env
+# Windows: copy template
+copy .env.example .env
+
+# Lalu edit .env:
+# Linux/Mac: nano .env  atau  vim .env
+# Windows: notepad .env  atau  code .env
 ```
 
 Isi file `.env`:
@@ -104,7 +108,7 @@ chmod 600 .env
 # Cukup pastikan file gak di-share publik.
 ```
 
-> CLI otomatis ngecek permission `.env`. Kalo terlalu terbuka (＞600), bakal muncul warning merah dan minta konfirmasi.
+> CLI otomatis ngecek permission `.env` (Linux/Mac). Kalo terlalu terbuka (＞600), bakal muncul warning merah dan minta konfirmasi. Windows skip check ini karena NTFS beda sistem permission.
 
 ## Pasang Command
 
@@ -198,7 +202,13 @@ python automint.py --contract 0xbd3531da5cf5857e7cfaa92426877b022e612cf8
 Pake `--dry-run` kalo mau cek dulu tanpa beneran mint:
 
 ```bash
+# Linux/Mac:
 automint --url https://opensea.io/collection/pudgy-penguins --dry-run
+automint --contract 0xbd3531da5cf5857e7cfaa92426877b022e612cf8 --dry-run
+
+# Windows:
+python automint.py --url https://opensea.io/collection/pudgy-penguins --dry-run
+python automint.py --contract 0xbd3531da5cf5857e7cfaa92426877b022e612cf8 --dry-run
 ```
 
 Dry-run bakal:
@@ -213,7 +223,11 @@ Dry-run bakal:
 Kalo males daftar OpenSea API key, tinggal pake contract address:
 
 ```bash
+# Linux/Mac:
 automint --contract 0xbd3531da5cf5857e7cfaa92426877b022e612cf8 --dry-run
+
+# Windows:
+python automint.py --contract 0xbd3531da5cf5857e7cfaa92426877b022e612cf8 --dry-run
 ```
 
 Chain auto-detect jalan otomatis. Gak butuh `OPENSEA_API_KEY`.
@@ -223,14 +237,15 @@ Chain auto-detect jalan otomatis. Gak butuh `OPENSEA_API_KEY`.
 Chain auto-detect, tapi kalo mau paksa chain tertentu:
 
 ```bash
-# Paksa Base
+# Linux/Mac:
 automint --contract 0x... --chain base
-
-# Paksa Polygon
 automint --url https://opensea.io/collection/... --chain polygon
-
-# Custom RPC
 automint --url ... --rpc https://eth-mainnet.g.alchemy.com/v2/xxx
+
+# Windows:
+python automint.py --contract 0x... --chain base
+python automint.py --url https://opensea.io/collection/... --chain polygon
+python automint.py --url ... --rpc https://eth-mainnet.g.alchemy.com/v2/xxx
 ```
 
 Alias chain: `eth`, `base`, `op` / `optimism`, `arb` / `arbitrum`, `matic` / `polygon`, `bsc`.
@@ -357,9 +372,9 @@ Priority RPC: `--rpc` CLI > `RPC_CHAIN` di `.env` > public default (tabel atas)
 
 ## CLI Arguments
 
-```
+```bash
 automint [-h] [--url URL] [--contract CONTRACT] [--chain CHAIN]
-         [--rpc RPC] [--dry-run]
+         [--rpc RPC] [--dry-run] [--wallet WALLET]
 ```
 
 | Argumen | Fungsi |
@@ -403,7 +418,16 @@ Semua hasil mint tercatat di `automint.log` (format JSON lines):
 {"timestamp": "2026-06-26 12:00:00 UTC", "chain": "ethereum", "contract": "0xbd35...", "tier": "Public", "price": 0.005, "status": "success", "tx_hash": "0xabc123..."}
 ```
 
-Bisa dicek pake `cat automint.log` atau `tail -f automint.log`.
+Bisa dicek pake:
+```bash
+# Linux/Mac:
+cat automint.log
+tail -f automint.log
+
+# Windows:
+type automint.log
+# (gak ada real-time tail di CMD, pake PowerShell Get-Content -Wait automint.log)
+```
 
 ---
 
@@ -411,7 +435,7 @@ Bisa dicek pake `cat automint.log` atau `tail -f automint.log`.
 
 1. **Wallet khusus** — jangan pake wallet utama. Buat wallet baru khusus AutoMint.
 2. **Private key di `.env`** — jangan pernah commit ke GitHub. `.gitignore` udah configured.
-3. **Permission `.env`** — harus 600 (`chmod 600 .env`). CLI warning kalo kebuka.
+3. **Permission `.env`** (Linux/Mac) — harus 600 (`chmod 600 .env`). CLI warning kalo kebuka. Windows skip check ini.
 4. **Chain mismatch** — kalo custom RPC chainId gak cocok, CLI abort. Dana lo aman.
 5. **Multi-key support** — multiple wallet via `PRIVATE_KEYS=0x...,0x...` di `.env`. Pilih wallet index atau `all` untuk batch mint.
 6. **Test pake dry-run dulu** — sebelum beneran mint, jalankan `--dry-run` biar tau estimasi biaya.
@@ -424,7 +448,8 @@ Bisa dicek pake `cat automint.log` atau `tail -f automint.log`.
 Isi `OPENSEA_API_KEY` di `.env`. Atau pake `--contract 0x...` langsung (gak butuh OS API).
 
 ### ".env permission too open"
-Jalanin `chmod 600 .env`. Ketik `y` kalo mau lanjut (gak disarankan).
+**Linux/Mac:** Jalanin `chmod 600 .env`. Ketik `y` kalo mau lanjut (gak disarankan).
+**Windows:** Abaikan — permission check gak jalan di Windows.
 
 ### "Could not auto-detect chain"
 Contract gak ketemu di chain mana pun. Pake `--chain eth` / `--chain base` manual.
@@ -442,4 +467,8 @@ Kemungkinan: udah mint duluan, gak eligible pas real mint, atau contract pake me
 Top up wallet. Cek balance sama total cost di estimasi.
 
 ### Gak tau harus ngapain?
-Tinggal `automint` enter, paste URL, enter, `y` enter. Selesai.
+Tinggal:
+- **Linux/Mac:** `automint` enter, paste URL, enter, `y` enter.
+- **Windows:** `python automint.py` enter, paste URL, enter, `y` enter.
+
+Selesai.
