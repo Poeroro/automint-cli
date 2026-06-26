@@ -1,13 +1,16 @@
-"""Detect contract + tiers from OpenSea URL or contract address."""
+"""Detect contract + tiers from OpenSea URL or contract address.
 
-import re, time
+Parallel eth_call + cache contract results.
+"""
+
+import re, time, os, json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 from web3 import Web3
 
 from .config import get_rpc, CHAINS, CHAIN_MAP
 from .config import resolve_chain as _resolve_chain
 
-# ── Known chain identifiers from OpenSea ──
 OS_CHAIN_MAP = {
     'ethereum': 'ethereum', 'eth': 'ethereum',
     'base': 'base',
@@ -17,9 +20,38 @@ OS_CHAIN_MAP = {
     'bsc': 'bsc', 'binance': 'bsc',
 }
 
+CACHE_DIR = '.cache'
+
+
+def _cache_path(chain: str, contract: str) -> str:
+    """Path for cached detect result."""
+    return os.path.join(CACHE_DIR, f'{chain}_{contract.lower()}.json')
+
+
+def _load_cache(chain: str, contract: str) -> dict | None:
+    """Load cached detect result. Return None if miss/expired/stale."""
+    path = _cache_path(chain, contract)
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        return data
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
+def _save_cache(chain: str, contract: str, data: dict):
+    """Save detect result to cache."""
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        path = _cache_path(chain, contract)
+        with open(path, 'w') as f:
+            json.dump(data, f, indent=2, default=str)
+    except OSError:
+        pass  # cache failure non-fatal
+
 
 def scrape_opensea_collection(slug: str) -> dict:
-    """Scrape OpenSea page HTML for contract address + chain."""
+    """Scrape OpenSea page HTML for contract address + chain (~1-3s)."""
     result = {'contract': '', 'chain': 'ethereum', 'name': slug}
     try:
         resp = requests.get(
@@ -32,15 +64,12 @@ def scrape_opensea_collection(slug: str) -> dict:
             return result
 
         html = resp.text
-        # Pattern: chain object then address within ~500 chars
-        # "chain":{"identifier":"ethereum",...}..."address":"0x..."
         chain_addr = re.search(
             r'"chain"\s*:\s*\{[^}]*?"identifier"\s*:\s*"([^"]+)"[^}]*?\}'
             r'[\s\S]{0,500}?"address"\s*:\s*"(0x[a-fA-F0-9]{40})"',
             html
         )
         if not chain_addr:
-            # Try reverse: address then chain
             chain_addr = re.search(
                 r'"address"\s*:\s*"(0x[a-fA-F0-9]{40})"'
                 r'[\s\S]{0,500}?"chain"\s*:\s*\{[^}]*?"identifier"\s*:\s*"([^"]+)"',
@@ -64,17 +93,16 @@ def scrape_opensea_collection(slug: str) -> dict:
 
 
 def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
-    """Detect tier info, prices, timestamps via eth_call."""
+    """Detect tier info, prices, timestamps via parallel eth_call (~300ms)."""
     rpc = custom_rpc or get_rpc(chain)
     chain_info = CHAINS.get(chain)
     if not chain_info or not rpc:
         return {'error': 'unknown chain'}
 
-    w3 = Web3(Web3.HTTPProvider(rpc))
+    w3 = Web3(Web3.HTTPProvider(rpc, request_kwargs={'timeout': 10}))
     if not w3.is_connected():
         return {'error': 'RPC not connected'}
 
-    # Checksum contract address
     try:
         contract = Web3.to_checksum_address(contract)
     except:
@@ -91,38 +119,8 @@ def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
         'tiers': [],
     }
 
-    # Global max mint (fallback)
-    global_max = 0
-    global_max_selectors = [
-        '0xac5ba77b',  # maxMintAmount
-        '0x3a84b649',  # maxMintPerTx
-        '0xc3c5a547',  # maxPerMint
-        '0x1f2dcdb7',  # maxPerWallet
-    ]
-    for sel in global_max_selectors:
-        try:
-            resp = w3.eth.call({'to': contract, 'data': sel})
-            if resp and resp != '0x' and len(resp) >= 66:
-                val = int(resp, 16)
-                if 0 < val < 1000000:
-                    global_max = val
-                    break
-        except:
-            pass
-
-    # Name + symbol
-    try:
-        name_bytes = w3.eth.call({'to': contract, 'data': '0x06fdde03'})
-        result['name'] = w3.codec.decode(['string'], name_bytes)[0] if len(name_bytes) > 2 else ''
-    except:
-        pass
-    try:
-        sym_bytes = w3.eth.call({'to': contract, 'data': '0x95d89b41'})
-        result['symbol'] = w3.codec.decode(['string'], sym_bytes)[0] if len(sym_bytes) > 2 else ''
-    except:
-        pass
-
-    now = int(time.time())
+    # ── Build all eth_calls ──
+    global_max_selectors = ['0xac5ba77b', '0x3a84b649', '0xc3c5a547', '0x1f2dcdb7']
 
     TIER_METHODS = [
         ('Team',     ['0x8f0f73a8', '0x3b2b4b03']),
@@ -133,62 +131,121 @@ def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
     ]
 
     price_selectors = {
-        'Public':     '0x1249c58b',
-        'Allowlist':  '0x52044153',
-        'FCFS':       '0x0c91f87b',
-        'GTD':        '0xb6b5b5b5',
-        'Team':       '0x8f0f73a8',
+        'Public': '0x1249c58b', 'Allowlist': '0x52044153',
+        'FCFS': '0x0c91f87b', 'GTD': '0xb6b5b5b5', 'Team': '0x8f0f73a8',
     }
     time_selectors = {
-        'Public':     '0xefefefef',
-        'Allowlist':  '0x5c1f0ecf',
-        'FCFS':       '0xc2cf717c',
+        'Public': '0xefefefef', 'Allowlist': '0x5c1f0ecf', 'FCFS': '0xc2cf717c',
     }
 
+    tier_max_map = {
+        'Public':    ['0x64e604ba', '0x77141fb6', '0xce40e4c8'],
+        'Allowlist': ['0x2a38dee1', '0x84568828', '0x3013ce4b'],
+        'FCFS':      ['0x2e2f4cc2'],
+        'GTD':       ['0x0b6b5b5b'],
+        'Team':      ['0x8f0f73a8'],
+    }
+
+    # Build flat call list: (key, data)
+    # key format: "category:detail" or "global_max:sel" or "name" etc.
+    calls = []
+    for sel in global_max_selectors:
+        calls.append((f'gm:{sel}', sel, False))
+
+    calls.append(('name', '0x06fdde03', False))
+    calls.append(('symbol', '0x95d89b41', False))
+
+    for tn, sels in TIER_METHODS:
+        ps = price_selectors.get(tn)
+        if ps:
+            calls.append((f'{tn}:price', ps, False))
+        ts = time_selectors.get(tn)
+        if ts:
+            calls.append((f'{tn}:time', ts, False))
+        for sel in sels:
+            calls.append((f'{tn}:meth:{sel}', sel + '0' * 63 + '1', True))
+
+        tn_max = tier_max_map.get(tn, [])
+        for sel in tn_max:
+            calls.append((f'{tn}:max:{sel}', sel, False))
+
+    # ── Execute all eth_calls in parallel ──
+    def do_call(args):
+        key, data, _ = args
+        resp = w3.eth.call({'to': contract, 'data': data})
+        return key, resp
+
+    raw = {}
+    with ThreadPoolExecutor(max_workers=min(len(calls), 25)) as ex:
+        futs = {ex.submit(do_call, c): c[0] for c in calls}
+        for f in as_completed(futs):
+            try:
+                k, v = f.result()
+                raw[k] = v
+            except:
+                pass
+
+    # ── Process results ──
+    # Global max
+    global_max = 0
+    for sel in global_max_selectors:
+        resp = raw.get(f'gm:{sel}')
+        if resp and resp != '0x' and len(resp) >= 66:
+            val = int(resp, 16)
+            if 0 < val < 1000000:
+                global_max = val
+                break
+
+    # Name + symbol
+    n_raw = raw.get('name')
+    if n_raw and len(n_raw) > 2:
+        try:
+            result['name'] = w3.codec.decode(['string'], n_raw)[0]
+        except:
+            pass
+    s_raw = raw.get('symbol')
+    if s_raw and len(s_raw) > 2:
+        try:
+            result['symbol'] = w3.codec.decode(['string'], s_raw)[0]
+        except:
+            pass
+
+    now = int(time.time())
     detected = []
-    for tier_name, sels in TIER_METHODS:
+
+    for tn, sels in TIER_METHODS:
         tier_price = 0
         tier_start = None
         tier_sig = ''
 
         # Price
-        price_sel = price_selectors.get(tier_name)
-        if price_sel:
-            try:
-                resp = w3.eth.call({'to': contract, 'data': price_sel})
-                if resp and resp != '0x' and len(resp) >= 66:
-                    val = int(resp, 16)
-                    if val > 0:
-                        tier_price = val / 1e18
-                        tier_sig = price_sel
-            except:
-                pass
+        ps = price_selectors.get(tn)
+        if ps:
+            resp = raw.get(f'{tn}:price')
+            if resp and resp != '0x' and len(resp) >= 66:
+                val = int(resp, 16)
+                if val > 0:
+                    tier_price = val / 1e18
+                    tier_sig = ps
 
         # Start time
-        time_sel = time_selectors.get(tier_name)
-        if time_sel:
-            try:
-                resp = w3.eth.call({'to': contract, 'data': time_sel})
-                if resp and resp != '0x' and len(resp) >= 66:
-                    ts = int(resp, 16)
-                    if ts > 1000000000:
-                        tier_start = ts
-                        tier_sig = tier_sig or sels[0]
-            except:
-                pass
+        ts = time_selectors.get(tn)
+        if ts:
+            resp = raw.get(f'{tn}:time')
+            if resp and resp != '0x' and len(resp) >= 66:
+                val = int(resp, 16)
+                if val > 1000000000:
+                    tier_start = val
+                    tier_sig = tier_sig or sels[0]
 
         # Method existence check
         for sel in sels:
-            if not tier_sig:
-                try:
-                    resp = w3.eth.call({'to': contract, 'data': sel + '0' * 63 + '1'})
-                    if resp and resp != '0x':
-                        tier_sig = sel
-                        break
-                except:
-                    pass
+            k = f'{tn}:meth:{sel}'
+            if k in raw and raw[k] and raw[k] != '0x':
+                tier_sig = sel
+                break
 
-        if not tier_sig and tier_name != 'Public':
+        if not tier_sig and tn != 'Public':
             continue
 
         status = 'unknown'
@@ -199,37 +256,24 @@ def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
                 status = 'active'
         elif tier_price > 0:
             status = 'active'
-        elif tier_name == 'Public':
+        elif tn == 'Public':
             status = 'active'
 
-        # Max mint per tier
+        # Max mint
         tier_max = 0
-        tier_max_sels = []
-        if tier_name == 'Public':
-            tier_max_sels = ['0x64e604ba', '0x77141fb6', '0xce40e4c8']
-        elif tier_name == 'Allowlist':
-            tier_max_sels = ['0x2a38dee1', '0x84568828', '0x3013ce4b']
-        elif tier_name == 'FCFS':
-            tier_max_sels = ['0x2e2f4cc2']
-        elif tier_name == 'GTD':
-            tier_max_sels = ['0x0b6b5b5b']
-        elif tier_name == 'Team':
-            tier_max_sels = ['0x8f0f73a8']
-        for sel in tier_max_sels:
-            try:
-                resp = w3.eth.call({'to': contract, 'data': sel})
-                if resp and resp != '0x' and len(resp) >= 66:
-                    val = int(resp, 16)
-                    if 0 < val < 1000000:
-                        tier_max = val
-                        break
-            except:
-                pass
+        tn_mx = tier_max_map.get(tn, [])
+        for sel in tn_mx:
+            resp = raw.get(f'{tn}:max:{sel}')
+            if resp and resp != '0x' and len(resp) >= 66:
+                val = int(resp, 16)
+                if 0 < val < 1000000:
+                    tier_max = val
+                    break
         if not tier_max:
             tier_max = global_max
 
         detected.append({
-            'name': tier_name,
+            'name': tn,
             'price': tier_price,
             'startTime': tier_start,
             'status': status,
@@ -237,21 +281,18 @@ def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
             'maxMint': tier_max,
         })
 
-    # Fallback: global mintPrice
+    # Fallback
     if not detected:
-        try:
-            resp = w3.eth.call({'to': contract, 'data': '0x1249c58b'})
-            if resp and resp != '0x' and len(resp) >= 66:
-                val = int(resp, 16)
-                if val > 0:
-                    result['mintPrice'] = val / 1e18
-                    detected.append({
-                        'name': 'Public', 'price': val / 1e18,
-                        'startTime': None, 'status': 'active',
-                        'methodSig': '0x1249c58b',
-                    })
-        except:
-            pass
+        resp = raw.get('Public:price') or raw.get('gm:0x1249c58b')
+        if resp and resp != '0x' and len(resp) >= 66:
+            val = int(resp, 16)
+            if val > 0:
+                result['mintPrice'] = val / 1e18
+                detected.append({
+                    'name': 'Public', 'price': val / 1e18,
+                    'startTime': None, 'status': 'active',
+                    'methodSig': '0x1249c58b',
+                })
 
     result['tiers'] = detected
     return result
@@ -260,8 +301,7 @@ def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
 def detect(url_or_contract: str, chain_hint: str = '', custom_rpc: str = '') -> dict:
     """Main detect — URL → scrape → on-chain, or contract → on-chain.
 
-    If contract address given WITHOUT --chain, returns error immediately.
-    No more auto-detect loop across 6 chains (was 18s timeout waste).
+    Checks cache first. Skips detect_onchain if cached result exists.
     """
     # Contract address langsung
     if re.match(r'^0x[a-fA-F0-9]{40}$', url_or_contract):
@@ -269,23 +309,38 @@ def detect(url_or_contract: str, chain_hint: str = '', custom_rpc: str = '') -> 
         if not chain_resolved:
             if chain_hint:
                 return {'error': f'Unknown chain: "{chain_hint}". Use: eth/base/op/arb/polygon/bsc'}
-            else:
-                return {'error': 'Chain required with contract address. Use --chain eth/base/op/arb/polygon/bsc'}
-        return detect_onchain(url_or_contract, chain_resolved, custom_rpc)
+            return {'error': 'Chain required with contract address. Use --chain eth/base/op/arb/polygon/bsc'}
+        # Check cache
+        cached = _load_cache(chain_resolved, url_or_contract)
+        if cached:
+            cached['_cached'] = True
+            return cached
+        result = detect_onchain(url_or_contract, chain_resolved, custom_rpc)
+        if not result.get('error'):
+            _save_cache(chain_resolved, url_or_contract, result)
+        return result
 
     # OpenSea URL — scrape not API
     m = re.search(r'opensea\.io/collection/([^/?#]+)', url_or_contract)
     if m:
         slug = m.group(1)
-        pass  # print(f'Scraping OpenSea collection "{slug}"...')
         resolved = scrape_opensea_collection(slug)
         if resolved.get('error'):
             return {'error': resolved['error'], 'name': slug}
+        # Check cache
+        cached = _load_cache(resolved['chain'], resolved['contract'])
+        if cached:
+            cached['_cached'] = True
+            cached['name'] = cached.get('name') or resolved['name']
+            cached['slug'] = slug
+            return cached
         onchain = detect_onchain(resolved['contract'], resolved['chain'], custom_rpc)
         if onchain.get('error'):
             return onchain
         onchain['name'] = onchain.get('name') or resolved['name']
         onchain['slug'] = slug
+        if not onchain.get('error'):
+            _save_cache(resolved['chain'], resolved['contract'], onchain)
         return onchain
 
     return {'error': 'Invalid input — use OpenSea URL or 0x contract address'}
