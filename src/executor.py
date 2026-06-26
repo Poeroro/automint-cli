@@ -52,9 +52,13 @@ def _fmt_duration(secs: int) -> str:
     return f'{h:02d}:{m:02d}:{s:02d}'
 
 
-def execute_mint(contract: str, chain: str, tier: dict, custom_rpc: str = '', quantity: int = 1, private_key_override: str = '') -> dict:
+def execute_mint(contract: str, chain: str, tier: dict, custom_rpc: str = '',
+                 quantity: int = 1, private_key_override: str = '',
+                 gas_params: dict = None) -> dict:
     """Build tx, sign, send, wait receipt. Return report.
-       private_key_override — untuk multi-account, pake key tertentu."""
+       private_key_override — untuk multi-account, pake key tertentu.
+       gas_params — dari show_gas_menu: {type:'eip1559', max_fee, priority_fee}
+                    or {type:'legacy', gas_price}. Kalo None, auto."""
     rpc = custom_rpc or get_rpc(chain)
     w3 = Web3(Web3.HTTPProvider(rpc))
     if not w3.is_connected():
@@ -101,15 +105,6 @@ def execute_mint(contract: str, chain: str, tier: dict, custom_rpc: str = '', qu
     except Exception as e:
         return {'status': 'error', 'message': f'estimate gas: {str(e)[:80]}'}
 
-    try:
-        fee_history = rpc_retry(lambda: w3.eth.fee_history(1, 'latest', [25]))
-        base_fee = fee_history['baseFeePerGas'][-1]
-        max_priority = fee_history['reward'][-1][0] if fee_history['reward'] else 1000000000
-        max_fee = base_fee + max_priority
-    except:
-        max_fee = w3.eth.gas_price
-        max_priority = 1000000000
-
     # Nonce — pake 'pending' biar gak tabrakan kalo ada tx lain
     nonce = w3.eth.get_transaction_count(wallet, 'pending')
 
@@ -118,11 +113,25 @@ def execute_mint(contract: str, chain: str, tier: dict, custom_rpc: str = '', qu
         'data': calldata,
         'value': price_wei,
         'gas': gas_estimate,
-        'maxFeePerGas': max_fee,
-        'maxPriorityFeePerGas': max_priority,
         'nonce': nonce,
         'chainId': w3.eth.chain_id,
     }
+
+    if gas_params and gas_params.get('type') == 'eip1559':
+        tx['maxFeePerGas'] = gas_params['max_fee']
+        tx['maxPriorityFeePerGas'] = gas_params['priority_fee']
+    elif gas_params and gas_params.get('type') == 'legacy':
+        tx['gasPrice'] = gas_params['gas_price']
+    else:
+        # Auto fallback
+        try:
+            fee_history = rpc_retry(lambda: w3.eth.fee_history(1, 'latest', [25]))
+            base_fee = fee_history['baseFeePerGas'][-1]
+            max_priority = fee_history['reward'][-1][0] if fee_history['reward'] else 1000000000
+            tx['maxFeePerGas'] = base_fee + max_priority
+            tx['maxPriorityFeePerGas'] = max_priority
+        except:
+            tx['gasPrice'] = w3.eth.gas_price
 
     # Sign + send
     try:
@@ -140,7 +149,7 @@ def execute_mint(contract: str, chain: str, tier: dict, custom_rpc: str = '', qu
 
     if receipt['status'] == 1:
         gas_used = receipt['gasUsed']
-        gas_price = receipt.get('effectiveGasPrice', max_fee)
+        gas_price = receipt.get('effectiveGasPrice', tx.get('maxFeePerGas', tx.get('gasPrice', 0)))
         gas_cost = gas_used * gas_price / 1e18
         return {
             'status': 'success',

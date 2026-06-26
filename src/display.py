@@ -150,6 +150,120 @@ def show_wallets(wallets_info: list, currency: str = 'ETH'):
     console.print(table)
 
 
+def show_gas_menu(w3, chain='ethereum', currency='ETH'):
+    """Interaktif gas selection: Low/Med/High/Custom.
+       Return gas_params dict: {type, max_fee, priority_fee} or {type, gas_price}."""
+    from .config import rpc_retry
+
+    block_times = {'ethereum': 12, 'base': 2, 'optimism': 2, 'arbitrum': 1, 'polygon': 2, 'bsc': 3}
+    bt = block_times.get(chain, 12)
+
+    # Detect EIP-1559 support
+    is_eip1559 = False
+    try:
+        w3.eth.max_priority_fee
+        is_eip1559 = True
+    except:
+        pass
+
+    if is_eip1559:
+        try:
+            fh = rpc_retry(lambda: w3.eth.fee_history(4, 'latest', [10, 50, 90]))
+            base = fh['baseFeePerGas'][-1]
+            rw = fh.get('reward', [])
+            if rw and rw[-1]:
+                lo = max(int(rw[-1][0]), 1_000_000_000)
+                md = max(int(rw[-1][1]), 3_000_000_000)
+                hi = max(int(rw[-1][2]), 10_000_000_000)
+            else:
+                lo, md, hi = 1_000_000_000, 3_000_000_000, 10_000_000_000
+        except:
+            lo, md, hi = 1_000_000_000, 3_000_000_000, 10_000_000_000
+            try:
+                base = int(w3.eth.gas_price * 0.7)
+            except:
+                base = lo * 10
+
+        opts = [
+            ('🐢 Low', lo, f'~{bt * 3}s'),
+            ('🚶 Medium', md, f'~{bt}s'),
+            ('🚀 High', hi, f'~{bt // 2}s'),
+        ]
+
+        console.print('\n[bold]🔥 Gas Price Selection[/bold]')
+        t = Table(box=box.ROUNDED, header_style='bold')
+        t.add_column('#', style='dim')
+        t.add_column('Option')
+        t.add_column('Priority', justify='right')
+        t.add_column('Max Fee', justify='right')
+        t.add_column('Est. Time', justify='right')
+        for i, (lbl, prio, est) in enumerate(opts):
+            t.add_row(str(i), lbl, f'{prio/1e9:.1f} Gwei', f'{(base + prio)/1e9:.1f} Gwei', est)
+        t.add_row('3', '⚙️ Custom', '[dim]manual[/dim]', '[dim]manual[/dim]', '[dim]—[/dim]')
+        console.print(t)
+
+        try:
+            ch = int((input('\nSelect gas [0-3, default=1] > ').strip() or '1'))
+        except (ValueError, EOFError, KeyboardInterrupt):
+            ch = 1
+
+        if ch == 3:
+            try:
+                pi = input(f'Priority fee (Gwei) [{md/1e9:.1f}] > ').strip()
+                mi = input(f'Max fee (Gwei) [{(base + md)/1e9:.1f}] > ').strip()
+                pf = int(float(pi) * 1e9) if pi else md
+                mf = int(float(mi) * 1e9) if mi else (base + md)
+            except:
+                pf, mf = md, base + md
+        elif 0 <= ch < len(opts):
+            _, pf, _ = opts[ch]
+            mf = base + pf
+        else:
+            pf, mf = md, base + md
+
+        return {'type': 'eip1559', 'max_fee': mf, 'priority_fee': pf}
+
+    # Legacy
+    try:
+        gp = w3.eth.gas_price
+    except:
+        gp = 10_000_000_000
+    opts = [
+        ('🐢 Low', int(gp * 0.9), f'~{bt * 5}s'),
+        ('🚶 Medium', gp, f'~{bt * 2}s'),
+        ('🚀 High', int(gp * 1.5), f'~{bt}s'),
+    ]
+
+    console.print('\n[bold]🔥 Gas Price Selection[/bold]')
+    t = Table(box=box.ROUNDED, header_style='bold')
+    t.add_column('#', style='dim')
+    t.add_column('Option')
+    t.add_column('Gas Price', justify='right')
+    t.add_column('Est. Time', justify='right')
+    for i, (lbl, pr, est) in enumerate(opts):
+        t.add_row(str(i), lbl, f'{pr/1e9:.1f} Gwei', est)
+    t.add_row('3', '⚙️ Custom', '[dim]manual[/dim]', '[dim]—[/dim]')
+    console.print(t)
+
+    try:
+        ch = int((input('\nSelect gas [0-3, default=1] > ').strip() or '1'))
+    except:
+        ch = 1
+
+    if ch == 3:
+        try:
+            gi = input(f'Gas price (Gwei) [{gp/1e9:.1f}] > ').strip()
+            gp_out = int(float(gi) * 1e9) if gi else gp
+        except:
+            gp_out = gp
+    elif 0 <= ch < len(opts):
+        _, gp_out, _ = opts[ch]
+    else:
+        gp_out = gp
+
+    return {'type': 'legacy', 'gas_price': gp_out}
+
+
 def show_report(report: dict, chain: str = ''):
     """Tampilkan laporan hasil mint."""
     status = report.get('status', 'unknown')

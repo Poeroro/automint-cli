@@ -20,7 +20,7 @@ from src.eligibility import check_eligibility, estimate_total_cost
 from src.executor import execute_mint, wait_for_countdown
 from src.display import (
     show_banner, show_detect_result, show_eligibility,
-    show_cost_estimate, show_report, show_wallets, console
+    show_cost_estimate, show_report, show_wallets, show_gas_menu, console
 )
 from src.config import resolve_chain, get_rpc, get_opensea_api_key, CHAINS, get_all_wallets
 from web3 import Web3
@@ -159,36 +159,21 @@ def prompt_quantity(tier, currency):
     return quantity
 
 
-def do_mint(w3, contract, chain, tier, custom_rpc, quantity, wallet_info, dry_run, currency):
-    """Proses mint untuk satu wallet. Handle countdown + execute."""
-    tier_data = tier  # sudah dari tiers
+def do_mint(w3, contract, chain, tier, custom_rpc, quantity, wallet_info, dry_run, currency, gas_params=None):
+    """Proses mint untuk satu wallet. Handle countdown + auto-execute."""
+    tier_data = tier
     status = tier.get('status', 'unknown')
 
     if status and status.startswith('scheduled:'):
         ts = int(status.split(':')[1])
         console.print(f'\n[bold]⏳ Countdown:[/bold] {tier["name"]} opens at {time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(ts))}')
-        console.print('[yellow]Auto-mint when countdown ends?[/yellow]')
-        try:
-            ans = input('[y/N] > ').strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            ans = 'n'
-        if ans != 'y':
-            console.print('[dim]Skipped.[/dim]')
-            return None
+        console.print(f'[dim]Auto-mint with selected gas at countdown end...[/dim]')
         ok = wait_for_countdown(ts, tier['name'])
         if not ok:
             return None
 
     elif status == 'active' or not status:
-        console.print(f'\n[green]Tier {tier["name"]} is LIVE![/green]')
-        console.print('[yellow]Mint now?[/yellow]')
-        try:
-            ans = input('[y/N] > ').strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            ans = 'n'
-        if ans != 'y':
-            console.print('[dim]Skipped.[/dim]')
-            return None
+        console.print(f'\n[green]{tier["name"]} is LIVE — auto-minting...[/green]')
 
     # Execute
     qty_note = f' × {quantity}' if quantity > 1 else ''
@@ -199,7 +184,8 @@ def do_mint(w3, contract, chain, tier, custom_rpc, quantity, wallet_info, dry_ru
         console.print('[yellow]── Dry-run — exiting ──[/yellow]')
         sys.exit(0)
 
-    report = execute_mint(contract, chain, tier_data, custom_rpc, quantity, wallet_info['private_key'])
+    report = execute_mint(contract, chain, tier_data, custom_rpc, quantity,
+                         wallet_info['private_key'], gas_params)
 
     # Show report
     show_report(report, chain)
@@ -378,6 +364,7 @@ def main():
             first_wallet = eligible_wallets[0]
             selected_tier = select_tier_interactive(first_wallet['eligible_tiers'], currency)
             quantity = prompt_quantity(selected_tier, currency)
+            gas_params = show_gas_menu(w3, chain, currency)
 
             console.print(f'\n[bold]═══ Batch mint: {len(eligible_wallets)} wallets ═══[/bold]')
 
@@ -388,7 +375,7 @@ def main():
                     console.print(f'  [dim]{w["address"][:10]}... — no {selected_tier["name"]} eligible, skip[/dim]')
                     continue
                 tier_for_wallet = match[0]
-                do_mint(w3, contract, chain, tier_for_wallet, custom_rpc, quantity, w, dry_run, currency)
+                do_mint(w3, contract, chain, tier_for_wallet, custom_rpc, quantity, w, dry_run, currency, gas_params)
 
             break
 
@@ -435,8 +422,11 @@ def main():
                 console.print('\n[yellow]── Dry-run mode — exiting ──[/yellow]')
                 sys.exit(0)
 
+            # Gas selection
+            gas_params = show_gas_menu(w3, chain, currency)
+
             # Execute
-            do_mint(w3, contract, chain, selected_tier, custom_rpc, quantity, wallet_info, dry_run, currency)
+            do_mint(w3, contract, chain, selected_tier, custom_rpc, quantity, wallet_info, dry_run, currency, gas_params)
 
         else:
             console.print('[red]Invalid selection[/red]')
