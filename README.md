@@ -87,7 +87,7 @@ Isi file `.env`:
 PRIVATE_KEY=0x1234...  # Private key wallet khusus kamu
 
 # ─── OPSIONAL: Custom RPC per Chain ───
-# Biarkan kosong kalo mau pake RPC default (Ankr untuk ETH)
+# Biarkan kosong kalo mau pake RPC default (PublicNode untuk ETH)
 # RPC_ETH=https://eth-mainnet.g.alchemy.com/v2/xxx
 # RPC_BASE=https://base-mainnet.g.alchemy.com/v2/xxx
 # RPC_OP=https://optimism-mainnet.g.alchemy.com/v2/xxx
@@ -288,7 +288,7 @@ Allowlist is LIVE — auto-minting...
 🚀 executing...
 ```
 
-Pilih gas → langsung auto-mint via Flashbots private mempool.
+Pilih gas → langsung auto-mint.
 
 ### Kalo Ada 2+ Tier Eligible
 
@@ -356,7 +356,7 @@ Kemungkinan: udah mint duluan, gak eligible pas eksekusi, atau contract error.
 
 | Chain | Chain ID | Currency | RPC Default | Explorer |
 |---|---|---|---|---|
-| Ethereum `eth` | 1 | ETH | `rpc.flashbots.net` | etherscan.io |
+| Ethereum `eth` | 1 | ETH | `ethereum.publicnode.com` | etherscan.io |
 | Base `base` | 8453 | ETH | `base-rpc.publicnode.com` | basescan.org |
 | Optimism `op` | 10 | ETH | `mainnet.optimism.io` | optimistic.etherscan.io |
 | Arbitrum `arb` | 42161 | ETH | `arb1.arbitrum.io/rpc` | arbiscan.io |
