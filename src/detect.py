@@ -5,13 +5,15 @@ import requests
 from web3 import Web3
 
 from .config import get_opensea_api_key, get_rpc, CHAINS, CHAIN_MAP
+from .config import resolve_chain as _resolve_chain
 
 def resolve_collection(slug: str, chain_hint: str = 'ethereum') -> dict:
     """Cari contract + stages dari OpenSea API v2."""
     result = {'contract': None, 'chain': chain_hint, 'name': '', 'stages': []}
     api_key = get_opensea_api_key()
     if not api_key:
-        result['warning'] = 'OPENSEA_API_KEY not set in .env — OS API will fail'
+        result['error'] = 'OPENSEA_API_KEY not set in .env'
+        return result
     headers = {
         'X-API-KEY': api_key,
         'Accept': 'application/json',
@@ -197,13 +199,33 @@ def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
     return result
 
 
+def auto_detect_chain(contract: str) -> str | None:
+    """Coba semua chain RPC, balik chain pertama yg contract-nya ada code."""
+    for name, info in CHAINS.items():
+        rpc = info['rpc']
+        try:
+            w3 = Web3(Web3.HTTPProvider(rpc))
+            code = w3.eth.get_code(Web3.to_checksum_address(contract))
+            if code and code != '0x' and len(code) > 2:
+                return name
+        except:
+            continue
+    return None
+
+
 def detect(url_or_contract: str, chain_hint: str = '', custom_rpc: str = '') -> dict:
     """Main detect — URL → resolve → on-chain, or contract langsung."""
     # Contract address langsung
     if re.match(r'^0x[a-fA-F0-9]{40}$', url_or_contract):
-        if not chain_hint:
+        chain_resolved = _resolve_chain(chain_hint)
+        if not chain_resolved and chain_hint:
             return {'error': 'Chain required for contract address'}
-        return detect_onchain(url_or_contract, chain_hint, custom_rpc)
+        if not chain_resolved:
+            # Auto-detect chain
+            chain_resolved = auto_detect_chain(url_or_contract)
+            if not chain_resolved:
+                return {'error': 'Could not auto-detect chain. Use --chain eth/base/op/arb/polygon/bsc'}
+        return detect_onchain(url_or_contract, chain_resolved, custom_rpc)
 
     # OpenSea URL
     m = re.search(r'opensea\.io/collection/([^/?#]+)', url_or_contract)

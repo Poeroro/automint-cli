@@ -101,12 +101,6 @@ def prompt_input(args):
     while not val:
         val = input('> ').strip()
 
-    chain = args.chain
-    if not chain:
-        c = input('Chain [eth/base/op/arb/polygon/bsc, enter=eth] > ').strip().lower()
-        if c:
-            chain = c
-
     rpc = args.rpc
 
     dry_run = args.dry_run
@@ -114,7 +108,7 @@ def prompt_input(args):
         ans = input('Dry-run only? (cek doang, gak mint) [y/N] > ').strip().lower()
         dry_run = ans == 'y'
 
-    return val, chain, rpc, dry_run
+    return val, args.chain, rpc, dry_run
 
 
 def main():
