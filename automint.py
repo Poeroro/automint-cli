@@ -138,7 +138,7 @@ def select_tier_interactive(eligible_tiers, currency):
         sys.exit(1)
 
 
-def prompt_quantity(tier, currency):
+def prompt_quantity(tier):
     """Minta quantity kalo maxMint > 1."""
     max_mint = tier.get('maxMint', 0)
     quantity = 1
@@ -373,7 +373,7 @@ def main():
                 break
             first_wallet = eligible_wallets[0]
             selected_tier = select_tier_interactive(first_wallet['eligible_tiers'], currency)
-            quantity = prompt_quantity(selected_tier, currency)
+            quantity = prompt_quantity(selected_tier)
             gas_params = show_gas_menu(w3, chain)
 
             console.print(f'\n[bold]═══ Batch mint: {len(eligible_wallets)} wallets ═══[/bold]')
@@ -408,7 +408,7 @@ def main():
             selected_tier = select_tier_interactive(wallet_info['eligible_tiers'], currency)
 
             # Quantity
-            quantity = prompt_quantity(selected_tier, currency)
+            quantity = prompt_quantity(selected_tier)
 
             # Cost estimate
             console.print('\n[bold]💰 Estimating cost...[/bold]')

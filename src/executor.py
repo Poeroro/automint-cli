@@ -95,9 +95,8 @@ def execute_mint(contract: str, chain: str, tier: dict, custom_rpc: str = '',
 
     # Cek balance dulu
     balance_wei = w3.eth.get_balance(wallet)
-    curr = tier.get('currency', 'ETH')
     if balance_wei < price_wei:
-        return {'status': 'error', 'message': f'Insufficient balance: {balance_wei/1e18:.6f} < {price_wei/1e18} {curr}'}
+        return {'status': 'error', 'message': f'Insufficient balance: {balance_wei/1e18:.6f} < {price_wei/1e18}'}
 
     # Gas
     try:
