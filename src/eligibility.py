@@ -12,6 +12,13 @@ def check_eligibility(contract: str, chain: str, wallet: str, tiers: list, custo
     if not w3.is_connected():
         return []
 
+    # Checksum
+    try:
+        contract = Web3.to_checksum_address(contract)
+        wallet = Web3.to_checksum_address(wallet)
+    except:
+        return []
+
     # Balance ETH
     wei_balance = w3.eth.get_balance(wallet)
     eth_balance = wei_balance / 1e18
@@ -94,6 +101,13 @@ def estimate_total_cost(contract: str, chain: str, wallet: str, tier: dict, cust
     w3 = Web3(Web3.HTTPProvider(rpc))
     if not w3.is_connected():
         return {'error': 'RPC not connected'}
+
+    # Checksum
+    try:
+        contract = Web3.to_checksum_address(contract)
+        wallet = Web3.to_checksum_address(wallet)
+    except:
+        return {'error': 'Invalid address'}
 
     price_wei = int(tier.get('price', 0) * 1e18)
     method_sig = tier.get('methodSig', '')

@@ -28,7 +28,7 @@ def resolve_collection(slug: str, chain_hint: str = 'ethereum') -> dict:
             contracts = d.get('contracts', [])
             if contracts:
                 c = contracts[0]
-                result['contract'] = c.get('address', '').lower()
+                result['contract'] = c.get('address', '')
                 chain_str = c.get('chain', 'ethereum').lower()
                 result['chain'] = CHAIN_MAP.get(chain_str, chain_str)
         elif r.status_code in (401, 403):
@@ -48,7 +48,7 @@ def resolve_collection(slug: str, chain_hint: str = 'ethereum') -> dict:
                 result['name'] = d.get('name', slug)
                 pac = d.get('primary_asset_contracts', [])
                 if pac:
-                    result['contract'] = pac[0].get('address', '').lower()
+                    result['contract'] = pac[0].get('address', '')
         except:
             pass
 
@@ -65,6 +65,12 @@ def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
     w3 = Web3(Web3.HTTPProvider(rpc))
     if not w3.is_connected():
         return {'error': 'RPC not connected'}
+
+    # Checksum contract address
+    try:
+        contract = Web3.to_checksum_address(contract)
+    except:
+        return {'error': 'Invalid contract address'}
 
     result = {
         'contract': contract,

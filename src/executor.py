@@ -60,6 +60,12 @@ def execute_mint(contract: str, chain: str, tier: dict, custom_rpc: str = '') ->
 
     wallet = acct.address
 
+    # Checksum contract
+    try:
+        contract = Web3.to_checksum_address(contract)
+    except:
+        return {'status': 'error', 'message': 'Invalid contract address'}
+
     # Build calldata
     method_sig = tier.get('methodSig', '0x1249c58b')
     price_wei = int(tier.get('price', 0) * 1e18)
