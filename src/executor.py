@@ -2,18 +2,16 @@
 
 import time, sys
 from web3 import Web3, Account
-from web3.middleware import construct_sign_and_send_raw_middleware
 
-from .config import get_rpc, get_private_key
+from .config import get_rpc, get_private_key, rpc_retry
 
 def get_wallet(w3: Web3) -> tuple:
-    """Load wallet dari private key env, inject middleware."""
+    """Load wallet dari private key env."""
     pk = get_private_key()
     if not pk or pk == '0x' + '0' * 64:
         return None, 'PRIVATE_KEY not set in .env'
     try:
         acct = Account.from_key(pk)
-        w3.middleware_onion.add(construct_sign_and_send_raw_middleware(acct))
         return acct, None
     except Exception as e:
         return None, f'Invalid private key: {str(e)[:40]}'
@@ -76,14 +74,14 @@ def execute_mint(contract: str, chain: str, tier: dict, custom_rpc: str = '') ->
 
     # Gas
     try:
-        gas_estimate = w3.eth.estimate_gas({
+        gas_estimate = rpc_retry(lambda: w3.eth.estimate_gas({
             'from': wallet, 'to': contract, 'data': calldata, 'value': hex(price_wei)
-        })
+        }))
     except Exception as e:
         return {'status': 'error', 'message': f'estimate gas: {str(e)[:80]}'}
 
     try:
-        fee_history = w3.eth.fee_history(1, 'latest', [25])
+        fee_history = rpc_retry(lambda: w3.eth.fee_history(1, 'latest', [25]))
         base_fee = fee_history['baseFeePerGas'][-1]
         max_priority = fee_history['reward'][-1][0] if fee_history['reward'] else 1000000000
         max_fee = base_fee + max_priority
@@ -108,7 +106,7 @@ def execute_mint(contract: str, chain: str, tier: dict, custom_rpc: str = '') ->
     # Sign + send
     try:
         signed = acct.sign_transaction(tx)
-        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+        tx_hash = rpc_retry(lambda: w3.eth.send_raw_transaction(signed.raw_transaction))
         print(f'\n   📤 Tx sent: {tx_hash.hex()[:18]}...{tx_hash.hex()[-6:]}')
     except Exception as e:
         return {'status': 'error', 'message': f'send tx: {str(e)[:80]}'}

@@ -4,17 +4,18 @@ import re, time, json
 import requests
 from web3 import Web3
 
-from .config import get_opensea_api_key, get_rpc, CHAINS
+from .config import get_opensea_api_key, get_rpc, CHAINS, CHAIN_MAP
 
 def resolve_collection(slug: str, chain_hint: str = 'ethereum') -> dict:
     """Cari contract + stages dari OpenSea API v2."""
+    result = {'contract': None, 'chain': chain_hint, 'name': '', 'stages': []}
     api_key = get_opensea_api_key()
+    if not api_key:
+        result['warning'] = 'OPENSEA_API_KEY not set in .env — OS API will fail'
     headers = {
         'X-API-KEY': api_key,
         'Accept': 'application/json',
     }
-    result = {'contract': None, 'chain': chain_hint, 'name': '', 'stages': []}
-
     # Coba OS API v2
     try:
         r = requests.get(
@@ -29,7 +30,9 @@ def resolve_collection(slug: str, chain_hint: str = 'ethereum') -> dict:
                 c = contracts[0]
                 result['contract'] = c.get('address', '').lower()
                 chain_str = c.get('chain', 'ethereum').lower()
-                result['chain'] = CHAIN_MAP_OS.get(chain_str, chain_str)
+                result['chain'] = CHAIN_MAP.get(chain_str, chain_str)
+        elif r.status_code in (401, 403):
+            result['warning'] = 'OPENSEA_API_KEY invalid or expired (HTTP 401/403)'
     except:
         pass
 
@@ -212,13 +215,3 @@ def detect(url_or_contract: str, chain_hint: str = '', custom_rpc: str = '') -> 
         return onchain
 
     return {'error': 'Invalid input — use OpenSea URL or 0x contract address'}
-
-
-CHAIN_MAP_OS = {
-    'ethereum': 'ethereum', 'eth': 'ethereum',
-    'base': 'base',
-    'optimism': 'optimism',
-    'arbitrum': 'arbitrum', 'arb': 'arbitrum',
-    'matic': 'polygon', 'polygon': 'polygon',
-    'bsc': 'bsc', 'binance': 'bsc',
-}

@@ -1,9 +1,20 @@
 """Chain config, env loader — RPC multichain dari .env."""
 
-import os
-from dotenv import load_dotenv
+import os, time
 
-load_dotenv()
+
+def rpc_retry(fn, max_attempts=3, delay=2):
+    """Retry RPC call with exponential backoff."""
+    last_err = None
+    for attempt in range(max_attempts):
+        try:
+            return fn()
+        except Exception as e:
+            last_err = e
+            if attempt < max_attempts - 1:
+                time.sleep(delay * (2 ** attempt))
+    raise last_err
+
 
 CHAINS = {
     'ethereum': {'id': 1, 'rpc': 'https://eth.drpc.org', 'currency': 'ETH', 'explorer': 'etherscan.io'},

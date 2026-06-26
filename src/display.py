@@ -72,10 +72,10 @@ def show_detect_result(data: dict):
     console.print(table)
 
 
-def show_eligibility(tiers: list, wallet: str, balance: float):
+def show_eligibility(tiers: list, wallet: str, balance: float, currency: str = 'ETH'):
     """Tampilkan eligibility tiap tier."""
     console.print(f'\n[bold]Wallet:[/bold] [cyan]{wallet[:10]}...{wallet[-6:]}[/cyan]')
-    console.print(f'[bold]Balance:[/bold] {balance:.6f} ETH')
+    console.print(f'[bold]Balance:[/bold] {balance:.6f} {currency}')
 
     table = Table(box=box.ROUNDED, header_style='bold')
     table.add_column('#', style='dim')

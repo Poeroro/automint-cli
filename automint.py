@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 """AutoMint CLI — NFT Minter Terminal.
 
 Usage:
@@ -8,7 +9,7 @@ Usage:
 Flow: detect → eligibility → pilih tier → countdown → execute → report
 """
 
-import sys, os, time, argparse
+import sys, os, time, argparse, json, stat
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -21,6 +22,49 @@ from src.display import (
     show_cost_estimate, show_report, console
 )
 from src.config import resolve_chain, get_rpc, CHAINS
+from web3 import Web3
+
+
+LOG_FILE = 'automint.log'
+
+
+def check_env_file():
+    """Cek permission .env — harus 600."""
+    env_path = '.env'
+    if not os.path.exists(env_path):
+        return
+    mode = os.stat(env_path).st_mode & 0o777
+    if mode > 0o600:
+        console.print(f'[red]⚠ .env permission {oct(mode)} — too open! Run:[/red]')
+        console.print(f'  [yellow]chmod 600 {env_path}[/yellow]')
+        console.print()
+        if input('Continue anyway? [y/N] > ').strip().lower() != 'y':
+            sys.exit(1)
+
+
+def verify_chain_id(w3: Web3, chain: str) -> bool:
+    """Cek chainId RPC cocok dengan chain yg dipilih."""
+    expected = CHAINS.get(chain, {}).get('id')
+    if not expected:
+        return True  # unknown chain, skip
+    try:
+        actual = w3.eth.chain_id
+    except:
+        return True  # gak bisa verify, skip
+    if actual != expected:
+        console.print(f'[red]✕ Chain mismatch! RPC chainId={actual}, expected {chain}(id={expected})[/red]')
+        console.print('[yellow]  Dana bisa hilang kalo lanjut![/yellow]')
+        return False
+    return True
+
+
+def append_log(entry: dict):
+    """Tulis log ke file JSON-lines."""
+    try:
+        with open(LOG_FILE, 'a') as f:
+            f.write(json.dumps(entry) + '\n')
+    except:
+        pass  # silent fail — gak kritikal
 
 
 def parse_args():
@@ -36,6 +80,7 @@ def parse_args():
 
 
 def main():
+    check_env_file()
     args = parse_args()
     show_banner()
 
@@ -51,24 +96,33 @@ def main():
         console.print(f'[red]✕ {result["error"]}[/red]')
         sys.exit(1)
 
+    # Tampilkan warning (OS API key dll)
+    if result.get('warning'):
+        console.print(f'[yellow]⚠ {result["warning"]}[/yellow]')
+
     show_detect_result(result)
 
     contract = result['contract']
     chain = result['chain']
     tiers = result['tiers']
+    currency = CHAINS.get(chain, {}).get('currency', 'ETH')
 
     if not tiers:
         console.print('[yellow]No tiers detected. Cannot proceed.[/yellow]')
         sys.exit(1)
 
-    # ── Step 2: Wallet ──
-    from web3 import Web3
+    # ── Step 1.5: ChainId validation ──
     rpc = custom_rpc or get_rpc(chain)
     w3 = Web3(Web3.HTTPProvider(rpc))
     if not w3.is_connected():
         console.print(f'[red]✕ RPC not connected: {chain}[/red]')
         sys.exit(1)
+    if custom_rpc:
+        if not verify_chain_id(w3, chain):
+            if input('Force continue? [y/N] > ').strip().lower() != 'y':
+                sys.exit(1)
 
+    # ── Step 2: Wallet ──
     acct, err = get_wallet(w3)
     if err:
         console.print(f'[red]✕ {err}[/red]')
@@ -79,12 +133,12 @@ def main():
     balance_eth = balance_wei / 1e18
 
     console.print(f'\n[bold]👛 Wallet:[/bold] [cyan]{wallet[:10]}...{wallet[-6:]}[/cyan]')
-    console.print(f'[bold]💰 Balance:[/bold] [cyan]{balance_eth:.6f} {CHAINS.get(chain, {}).get("currency", "ETH")}[/cyan]')
+    console.print(f'[bold]💰 Balance:[/bold] [cyan]{balance_eth:.6f} {currency}[/cyan]')
 
     # ── Step 3: Eligibility ──
     console.print('\n[bold]🔎 Checking eligibility...[/bold]')
     elig_results = check_eligibility(contract, chain, wallet, tiers, custom_rpc)
-    show_eligibility(elig_results, wallet, balance_eth)
+    show_eligibility(elig_results, wallet, balance_eth, currency)
 
     # Filter eligible
     eligible_tiers = [t for t in elig_results if t['eligible']]
@@ -100,7 +154,7 @@ def main():
     else:
         console.print('\n[bold]Select tier:[/bold]')
         for i, t in enumerate(eligible_tiers, 1):
-            price = f'{t["price"]} ETH' if t['price'] > 0 else 'FREE'
+            price = f'{t["price"]} {currency}' if t['price'] > 0 else 'FREE'
             console.print(f'  [cyan]{i}.[/cyan] {t["name"]} ({price})')
         try:
             choice = int(input('\n> ').strip())
@@ -119,7 +173,7 @@ def main():
 
     # Cek balance
     if est['total_wei'] > balance_wei:
-        console.print(f'\n[red]✕ Insufficient balance! Need {est["total_eth"]:.6f}, have {balance_eth:.6f}[/red]')
+        console.print(f'\n[red]✕ Insufficient balance! Need {est["total_eth"]:.6f} {currency}, have {balance_eth:.6f} {currency}[/red]')
         sys.exit(1)
     else:
         console.print(f'\n[green]✅ Balance sufficient ({balance_eth:.6f} >= {est["total_eth"]:.6f})[/green]')
@@ -163,22 +217,24 @@ def main():
         console.print(f'[yellow]Tier status: {status} — proceeding with caution[/yellow]')
 
     # ── Step 7: Execute ──
-    console.print(f'\n[bold]🚀 Executing mint:[/bold] {selected["name"]} @ {CHAINS.get(chain, {}).get("currency", "ETH")} {selected["price"]}')
+    console.print(f'\n[bold]🚀 Executing mint:[/bold] {selected["name"]} @ {currency} {selected["price"]}')
     report = execute_mint(contract, chain, tier_data, custom_rpc)
 
     # ── Step 8: Report ──
     show_report(report, chain)
 
-    # Log
+    # ── Log ──
     log_entry = {
         'timestamp': time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime()),
         'chain': chain,
         'contract': contract,
         'tier': selected['name'],
+        'price': selected.get('price', 0),
         'status': report['status'],
         'tx_hash': report.get('tx_hash', ''),
     }
-    print(f'\n[dim]📝 Logged to automint.log[/dim]')
+    append_log(log_entry)
+    console.print(f'[dim]📝 Logged to {LOG_FILE}[/dim]')
 
 
 if __name__ == '__main__':
