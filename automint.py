@@ -3,8 +3,8 @@
 """AutoMint CLI — NFT Minter Terminal.
 
 Usage:
-  python automint.py --url https://opensea.io/collection/...
-  python automint.py --contract 0x... --chain eth [--rpc https://...] [--dry-run]
+  automint --url https://opensea.io/collection/...
+  automint --contract 0x... --chain eth [--rpc https://...] [--dry-run]
 
 Flow: detect → eligibility → pilih tier → countdown → execute → report
 """
@@ -21,7 +21,7 @@ from src.display import (
     show_banner, show_detect_result, show_eligibility,
     show_cost_estimate, show_report, console
 )
-from src.config import resolve_chain, get_rpc, CHAINS
+from src.config import resolve_chain, get_rpc, get_opensea_api_key, CHAINS
 from web3 import Web3
 
 
@@ -81,12 +81,26 @@ def parse_args():
 
 def main():
     check_env_file()
+
+    # ── Wajib: OpenSea API Key ──
+    if not get_opensea_api_key():
+        console.print('[red]✕ OPENSEA_API_KEY not set in .env[/red]')
+        console.print()
+        console.print('  Daftar API key gratis di [link=https://opensea.io/account/api]https://opensea.io/account/api[/link]')
+        console.print('  lalu tambahkan ke .env:')
+        console.print('  [yellow]OPENSEA_API_KEY=your_key_here[/yellow]')
+        console.print()
+        console.print('  [dim]Atau gunakan --contract + --chain langsung (tanpa URL OpenSea)[/dim]')
+        sys.exit(1)
+
     args = parse_args()
     show_banner()
 
     # ── Step 1: Detect ──
     input_str = args.url or args.contract
     chain_hint = resolve_chain(args.chain) or 'ethereum'
+    if args.chain and not resolve_chain(args.chain):
+        console.print(f'[yellow]⚠ Unknown chain "{args.chain}" — defaulting to ethereum[/yellow]')
     custom_rpc = args.rpc
 
     console.print(f'\n[bold]🔍 Detecting:[/bold] {input_str[:60]}...')

@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# AutoMint CLI — wrapper, pake venv python
+DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+exec "$DIR/venv/bin/python3" "$DIR/automint.py" "$@"

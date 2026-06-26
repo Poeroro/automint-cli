@@ -75,13 +75,13 @@ OPENSEA_API_KEY=cdef...  # API key dari https://opensea.io/account/api
 ### 1. Detect + Estimate aja — dry run
 
 ```bash
-python automint.py --url https://opensea.io/collection/pudgy-penguins --dry-run
+automint --url https://opensea.io/collection/pudgy-penguins --dry-run
 ```
 
 Atau pake contract address langsung (gak perlu OS API key):
 
 ```bash
-python automint.py --contract 0xbd3531da5cf5857e7cfaa92426877b022e612cf8 --chain eth --dry-run
+automint --contract 0xbd3531da5cf5857e7cfaa92426877b022e612cf8 --chain eth --dry-run
 ```
 
 Dry-run bakal:
@@ -95,10 +95,10 @@ Dry-run bakal:
 
 ```bash
 # Dari OpenSea URL
-python automint.py --url https://opensea.io/collection/pudgy-penguins
+automint --url https://opensea.io/collection/pudgy-penguins
 
 # Dari contract address
-python automint.py --contract 0xbd3531... --chain eth
+automint --contract 0xbd3531... --chain eth
 ```
 
 Flow:
@@ -115,13 +115,13 @@ Flow:
 
 ```bash
 # Base
-python automint.py --url https://opensea.io/collection/cool-guys --chain base
+automint --url https://opensea.io/collection/cool-guys --chain base
 
 # Arbitrum
-python automint.py --contract 0x... --chain arbitrum
+automint --contract 0x... --chain arbitrum
 
 # Polygon (bisa pake alias)
-python automint.py --contract 0x... --chain matic
+automint --contract 0x... --chain matic
 ```
 
 Alias chain: `eth` = `ethereum`, `op` = `optimism`, `arb` = `arbitrum`, `matic` = `polygon`, `bsc` = `binance`
@@ -129,7 +129,7 @@ Alias chain: `eth` = `ethereum`, `op` = `optimism`, `arb` = `arbitrum`, `matic` 
 ### 4. Custom RPC
 
 ```bash
-python automint.py --url https://opensea.io/collection/... --rpc https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY
+automint --url https://opensea.io/collection/... --rpc https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY
 ```
 
 Kalau custom RPC dipake, CLI bakal verifikasi chainId cocok. Kalo beda — warning + abort.
@@ -139,7 +139,7 @@ Kalau custom RPC dipake, CLI bakal verifikasi chainId cocok. Kalo beda — warni
 Kalo OpenSea URL gak specify chain, default ke Ethereum. Paksa pake `--chain`:
 
 ```bash
-python automint.py --url https://opensea.io/collection/some-base-collection --chain base
+automint --url https://opensea.io/collection/some-base-collection --chain base
 ```
 
 ---
@@ -163,7 +163,7 @@ RPC priority: `--rpc` CLI > `RPC_CHAIN` di `.env` > public default
 
 ```
 automint-cli/
-├── automint.py           # Entry point — argparse, main flow
+├── automint           # Entry point — argparse, main flow
 ├── .env.example          # Template env (isi PRIVATE_KEY + OPENSEA_API_KEY)
 ├── .gitignore            # .env gak di-commit
 ├── requirements.txt      # Dependencies
@@ -201,7 +201,7 @@ Semua hasil mint tercatat di `automint.log` (format JSON lines):
 ## CLI Arguments
 
 ```
-usage: automint.py [-h] (--url URL | --contract CONTRACT)
+usage: automint [-h] (--url URL | --contract CONTRACT)
                    [--chain CHAIN] [--rpc RPC] [--wallet WALLET] [--dry-run]
 
   --url URL             OpenSea collection URL
