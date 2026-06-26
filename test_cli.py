@@ -1,8 +1,8 @@
 """CLI command tests — edge cases, flags, real URL"""
 import subprocess, sys, os, json
 HERE = os.path.dirname(os.path.abspath(__file__))
-PY = os.path.join(HERE, 'venv', 'bin', 'python3')
-MAIN = os.path.join(HERE, 'automint')
+PY = os.path.join(HERE, '.venv', 'bin', 'python3')
+MAIN = os.path.join(HERE, 'automint.py')
 
 errors = 0
 

@@ -6,10 +6,8 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 from dotenv import load_dotenv
 load_dotenv()
 
-from web3 import Web3
 from src.eligibility import check_eligibility, estimate_total_cost
 from src.executor import get_wallet, wait_for_countdown, _fmt_duration, execute_mint
-from src.config import get_rpc
 
 errors = 0
 
@@ -28,9 +26,7 @@ check("_fmt_duration(86399)=23:59:59", _fmt_duration(86399) == "23:59:59")
 check("_fmt_duration(60)=00:01:00", _fmt_duration(60) == "00:01:00")
 
 # ── get_wallet (requires .env) ──
-rpc = get_rpc('ethereum')
-w3 = Web3(Web3.HTTPProvider(rpc))
-acct, err = get_wallet(w3)
+acct, err = get_wallet()
 check("get_wallet: no error", err is None, str(err))
 check("get_wallet: returns account", acct is not None)
 check("get_wallet: address valid", acct is not None and acct.address.startswith('0x') and len(acct.address) == 42)

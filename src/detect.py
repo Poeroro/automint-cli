@@ -1,6 +1,6 @@
 """Detect contract + tiers dari OpenSea URL atau contract address."""
 
-import re, time, json
+import re, time
 import requests
 from web3 import Web3
 

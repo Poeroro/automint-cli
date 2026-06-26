@@ -1,6 +1,5 @@
 """Eligibility check: balance, whitelist, gas estimate."""
 
-import time
 from web3 import Web3
 
 from .config import get_rpc
