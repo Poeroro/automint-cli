@@ -5,8 +5,14 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from rich import box
+from .config import CHAINS, rpc_retry
 
 console = Console()
+
+
+def _get_currency(chain, default='ETH'):
+    """Ambil currency symbol dari chain."""
+    return CHAINS.get(chain, {}).get('currency', default)
 
 
 def show_banner():
@@ -14,12 +20,6 @@ def show_banner():
         '[bold green]✦ AutoMint CLI[/bold green]  —  NFT Minter Terminal',
         border_style='green', padding=(1, 2)
     ))
-
-
-def _get_currency(chain, default='ETH'):
-    """Ambil currency symbol dari chain."""
-    from .config import CHAINS
-    return CHAINS.get(chain, {}).get('currency', default)
 
 
 def show_detect_result(data: dict):
@@ -150,10 +150,9 @@ def show_wallets(wallets_info: list, currency: str = 'ETH'):
     console.print(table)
 
 
-def show_gas_menu(w3, chain='ethereum', currency='ETH'):
+def show_gas_menu(w3, chain='ethereum'):
     """Interaktif gas selection: Low/Med/High/Custom.
        Return gas_params dict: {type, max_fee, priority_fee} or {type, gas_price}."""
-    from .config import rpc_retry
 
     block_times = {'ethereum': 12, 'base': 2, 'optimism': 2, 'arbitrum': 1, 'polygon': 2, 'bsc': 3}
     bt = block_times.get(chain, 12)

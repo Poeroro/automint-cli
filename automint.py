@@ -92,7 +92,7 @@ Contoh:
     p.add_argument('--chain', default='', help='Chain: eth/base/op/arb/polygon/bsc')
     p.add_argument('--rpc', default='', help='Custom RPC URL (override env/default)')
     p.add_argument('--dry-run', action='store_true', help='Detect + estimate only, no mint')
-    p.add_argument('--wallet', type=int, default=-1, help='Wallet index (multi-account, default: pilih)')
+    p.add_argument('--wallet', default='-1', help='Wallet index (multi-account). Contoh: 0 / all')
     return p.parse_args()
 
 
@@ -159,9 +159,8 @@ def prompt_quantity(tier, currency):
     return quantity
 
 
-def do_mint(w3, contract, chain, tier, custom_rpc, quantity, wallet_info, dry_run, currency, gas_params=None):
+def do_mint(contract, chain, tier, custom_rpc, quantity, wallet_info, dry_run, currency, gas_params=None):
     """Proses mint untuk satu wallet. Handle countdown + auto-execute."""
-    tier_data = tier
     status = tier.get('status', 'unknown')
 
     if status and status.startswith('scheduled:'):
@@ -184,7 +183,7 @@ def do_mint(w3, contract, chain, tier, custom_rpc, quantity, wallet_info, dry_ru
         console.print('[yellow]── Dry-run — exiting ──[/yellow]')
         sys.exit(0)
 
-    report = execute_mint(contract, chain, tier_data, custom_rpc, quantity,
+    report = execute_mint(contract, chain, tier, custom_rpc, quantity,
                          wallet_info['private_key'], gas_params)
 
     # Show report
@@ -254,9 +253,11 @@ def main():
     # ── Step 0: Input ──
     input_str, chain_hint_raw, custom_rpc, dry_run = prompt_input(args)
 
-    chain_hint = resolve_chain(chain_hint_raw) or 'ethereum'
-    if chain_hint_raw and not resolve_chain(chain_hint_raw):
+    chain_hint = resolve_chain(chain_hint_raw)
+    if chain_hint_raw and not chain_hint:
         console.print(f'[yellow]⚠ Unknown chain "{chain_hint_raw}" — defaulting to ethereum[/yellow]')
+    if not chain_hint:
+        chain_hint = 'ethereum'
 
     # ── Step 1: Detect ──
     console.print(f'\n[bold]🔍 Detecting:[/bold] {input_str[:60]}...')
@@ -335,8 +336,9 @@ def main():
             show_wallets(eligible_wallets, currency)
 
         # Pilih wallet
-        wallet_index = args.wallet
-        if wallet_index < 0:
+        raw_wallet = args.wallet
+        if raw_wallet == '-1':
+            # Interactive — no CLI override
             if len(eligible_wallets) == 1 and first_pass:
                 wallet_index = 0
                 console.print(f'\n[green]→ Auto-selected wallet 0: {eligible_wallets[0]["address"][:10]}...[/green]')
@@ -355,6 +357,14 @@ def main():
                         wallet_index = 0
                     else:
                         break
+        elif raw_wallet == 'all':
+            wallet_index = 'all'
+        else:
+            try:
+                wallet_index = int(raw_wallet)
+            except ValueError:
+                console.print(f'[red]Invalid --wallet value: {raw_wallet}[/red]')
+                break
 
         if wallet_index == 'all':
             # Batch — semua wallet pake tier + quantity yang sama
@@ -364,7 +374,7 @@ def main():
             first_wallet = eligible_wallets[0]
             selected_tier = select_tier_interactive(first_wallet['eligible_tiers'], currency)
             quantity = prompt_quantity(selected_tier, currency)
-            gas_params = show_gas_menu(w3, chain, currency)
+            gas_params = show_gas_menu(w3, chain)
 
             console.print(f'\n[bold]═══ Batch mint: {len(eligible_wallets)} wallets ═══[/bold]')
 
@@ -375,7 +385,7 @@ def main():
                     console.print(f'  [dim]{w["address"][:10]}... — no {selected_tier["name"]} eligible, skip[/dim]')
                     continue
                 tier_for_wallet = match[0]
-                do_mint(w3, contract, chain, tier_for_wallet, custom_rpc, quantity, w, dry_run, currency, gas_params)
+                do_mint(contract, chain, tier_for_wallet, custom_rpc, quantity, w, dry_run, currency, gas_params)
 
             break
 
@@ -406,12 +416,12 @@ def main():
             show_cost_estimate(est, currency)
 
             if est.get('error'):
-                if not first_pass:
-                    break
-                continue
-
-            if est['total_wei'] > wallet_info['balance_wei']:
+                console.print(f'[yellow]⚠ Gas estimate failed: {est["error"]}[/yellow]')
+                console.print('[yellow]  Proceeding anyway — user bear risk of failed tx[/yellow]')
+            elif est['total_wei'] > wallet_info['balance_wei']:
                 console.print(f'\n[red]✕ Insufficient balance! Need {est["total_eth"]:.6f} {currency}[/red]')
+                if args.wallet != '-1':
+                    break
                 if not first_pass:
                     break
                 continue
@@ -423,10 +433,10 @@ def main():
                 sys.exit(0)
 
             # Gas selection
-            gas_params = show_gas_menu(w3, chain, currency)
+            gas_params = show_gas_menu(w3, chain)
 
             # Execute
-            do_mint(w3, contract, chain, selected_tier, custom_rpc, quantity, wallet_info, dry_run, currency, gas_params)
+            do_mint(contract, chain, selected_tier, custom_rpc, quantity, wallet_info, dry_run, currency, gas_params)
 
         else:
             console.print('[red]Invalid selection[/red]')

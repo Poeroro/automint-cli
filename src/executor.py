@@ -5,7 +5,7 @@ from web3 import Web3, Account
 
 from .config import get_rpc, get_private_key, rpc_retry
 
-def get_wallet(w3: Web3) -> tuple:
+def get_wallet() -> tuple:
     """Load wallet dari private key env."""
     pk = get_private_key()
     if not pk or pk == '0x' + '0' * 64:
@@ -26,12 +26,13 @@ def wait_for_countdown(target_ts: int, tier_name: str):
     print(f'\n⏳ {tier_name} opens in {_fmt_duration(remaining)}')
     print('   [Press Ctrl+C to cancel]')
     try:
+        initial = remaining
         while remaining > 0:
             remaining = target_ts - int(time.time())
             if remaining <= 0:
                 break
-            total_dur = target_ts - int(time.time()) + remaining  # approximate total
-            pct = max(0, min(20, int((target_ts - int(time.time())) / max(target_ts, 1) * 20))) if target_ts > int(time.time()) else 0
+            pct = int((initial - remaining) / max(initial, 1) * 20)
+            pct = max(0, min(20, pct))
             bar = '█' * pct + '░' * (20 - pct)
             sys.stdout.write(f'\r   ⏱  {_fmt_duration(remaining)}  [{bar}]')
             sys.stdout.flush()
@@ -71,7 +72,7 @@ def execute_mint(contract: str, chain: str, tier: dict, custom_rpc: str = '',
         except:
             return {'status': 'error', 'message': 'Invalid private key'}
     else:
-        acct, err = get_wallet(w3)
+        acct, err = get_wallet()
         if err:
             return {'status': 'error', 'message': err}
 
@@ -94,8 +95,9 @@ def execute_mint(contract: str, chain: str, tier: dict, custom_rpc: str = '',
 
     # Cek balance dulu
     balance_wei = w3.eth.get_balance(wallet)
+    curr = tier.get('currency', 'ETH')
     if balance_wei < price_wei:
-        return {'status': 'error', 'message': f'Insufficient balance: {balance_wei/1e18:.6f} < {price_wei/1e18} ETH'}
+        return {'status': 'error', 'message': f'Insufficient balance: {balance_wei/1e18:.6f} < {price_wei/1e18} {curr}'}
 
     # Gas
     try:

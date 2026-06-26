@@ -79,7 +79,7 @@ PRIVATE_KEY=0x1234...  # Private key wallet khusus kamu
 OPENSEA_API_KEY=***   # Dari https://opensea.io/account/api
 
 # ─── OPSIONAL: Custom RPC per Chain ───
-# Biarkan kosong kalo mau pake RPC publik
+# Biarkan kosong kalo mau pake RPC default (Flashbots untuk ETH)
 # RPC_ETH=https://eth-mainnet.g.alchemy.com/v2/xxx
 # RPC_BASE=https://base-mainnet.g.alchemy.com/v2/xxx
 # RPC_OP=https://optimism-mainnet.g.alchemy.com/v2/xxx
@@ -101,7 +101,15 @@ chmod 600 .env
 Supaya tinggal ketik `automint` dari mana aja:
 
 ```bash
-ln -sf "$(pwd)/automint" /usr/local/bin/automint
+# Buat wrapper bash (butuh path project yang benar)
+sudo tee /usr/local/bin/automint > /dev/null << 'SCRIPT'
+#!/bin/bash
+cd /path/ke/automint-cli && exec ./venv/bin/python3 automint.py "$@"
+SCRIPT
+sudo chmod +x /usr/local/bin/automint
+
+# Ganti /path/ke/automint-cli dengan directory project kamu
+# Contoh: cd /home/user/automint-cli
 ```
 
 Selesai. Sekarang tinggal `automint` enter.
@@ -209,16 +217,12 @@ Kalo pake custom RPC, CLI verifikasi chainId. Kalo gak cocok — warning + abort
 
 ```
 ⏳ Countdown: Allowlist opens at 2026-06-27 14:00:00 UTC
-Auto-mint when countdown ends? [y/N] >
-```
-
-Ketik `y` → CLI nunggu countdown sampe 0 → otomatis kirim tx pas waktunya.
-
-```
+Auto-mint with selected gas at countdown end...
 ⏱  02:34:17  ████████░░░░░░░░░░░░
+   [Press Ctrl+C to cancel]
 ```
 
-Kalo mau cancel tinggal `Ctrl+C`.
+Pilih gas setelah quantity → CLI otomatis countdown → execute pas 0. `Ctrl+C` selama countdown kalo cancel.
 
 ### Kalo Tier Udah Live
 
@@ -234,11 +238,17 @@ Cost Estimate:
 
 ✅ Balance sufficient (0.050000 >= 0.003627)
 
-Tier Allowlist is LIVE!
-Mint now? [y/N] >
+🔥 Gas Price Selection
+  [0] 🐢 Low    (1.0 Gwei)
+  [1] 🚶 Medium (3.0 Gwei)     ← default
+  [2] 🚀 High   (10.0 Gwei)
+  [3] ⚙️ Custom
+
+Allowlist is LIVE — auto-minting...
+🚀 executing...
 ```
 
-Ketik `y` → sign + send tx → tunggu receipt.
+Pilih gas → langsung auto-mint via Flashbots private mempool.
 
 ### Kalo Ada 2+ Tier Eligible
 
@@ -304,9 +314,9 @@ Kemungkinan: udah mint duluan, gak eligible pas eksekusi, atau contract error.
 
 ## Chain Support
 
-| Chain | Chain ID | Currency | RPC Publik | Explorer |
+| Chain | Chain ID | Currency | RPC Default | Explorer |
 |---|---|---|---|---|
-| Ethereum `eth` | 1 | ETH | `eth.drpc.org` | etherscan.io |
+| Ethereum `eth` | 1 | ETH | `rpc.flashbots.net` (private mempool) | etherscan.io |
 | Base `base` | 8453 | ETH | `base-rpc.publicnode.com` | basescan.org |
 | Optimism `op` | 10 | ETH | `mainnet.optimism.io` | optimistic.etherscan.io |
 | Arbitrum `arb` | 42161 | ETH | `arb1.arbitrum.io/rpc` | arbiscan.io |
@@ -331,6 +341,7 @@ automint [-h] [--url URL] [--contract CONTRACT] [--chain CHAIN]
 | `--chain CHAIN` | Paksa chain (skip auto-detect). Contoh: `eth`, `base`, `polygon` |
 | `--rpc RPC` | Custom RPC URL. Override env & default |
 | `--dry-run` | Cek doang — detect + eligibility + estimate, gak kirim tx |
+| `--wallet WALLET` | Wallet index buat multi-account. Contoh: `--wallet 0` atau `--wallet all` buat batch |
 | `-h`, `--help` | Tampilkan help |
 
 Kalo gak ada `--url` atau `--contract`, CLI bakal minta input interaktif.
@@ -341,8 +352,7 @@ Kalo gak ada `--url` atau `--contract`, CLI bakal minta input interaktif.
 
 ```
 automint-cli/
-├── automint                # Wrapper shell (bash) — panggil dari mana aja
-├── automint.py             # Entry point utama
+├── automint.py             # Entry point utama (auto-exec dari symlink)
 ├── .env.example            # Template env variable
 ├── .gitignore              # .env gak masuk git
 ├── requirements.txt        # Dependency Python
@@ -375,7 +385,7 @@ Bisa dicek pake `cat automint.log` atau `tail -f automint.log`.
 2. **Private key di `.env`** — jangan pernah commit ke GitHub. `.gitignore` udah configured.
 3. **Permission `.env`** — harus 600 (`chmod 600 .env`). CLI warning kalo kebuka.
 4. **Chain mismatch** — kalo custom RPC chainId gak cocok, CLI abort. Dana lo aman.
-5. **Multi-key belum support** — satu `.env` = satu wallet.
+5. **Multi-key support** — multiple wallet via `PRIVATE_KEYS=0x...,0x...` di `.env`. Pilih wallet index atau `all` untuk batch mint.
 6. **Test pake dry-run dulu** — sebelum beneran mint, jalankan `--dry-run` biar tau estimasi biaya.
 
 ---
