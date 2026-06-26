@@ -36,11 +36,10 @@ Gak perlu ribet. Tinggal `automint` → paste URL → enter → selesai.
 ## Persyaratan
 
 | Barang | Keterangan |
-|---|---|
+|--|--|
 | Python | 3.10+ |
 | Wallet | Ethereum wallet dengan private key. **Buat wallet khusus** AutoMint, jangan wallet utama! |
-| OpenSea API Key | (opsional kalo pake `--contract`) Daftar gratis di [opensea.io/account/api](https://opensea.io/account/api) |
-| Internet | Koneksi ke RPC publik & OpenSea API |
+| Internet | Koneksi ke RPC publik |
 
 ---
 
@@ -86,10 +85,9 @@ Isi file `.env`:
 ```env
 # ─── WAJIB ───
 PRIVATE_KEY=0x1234...  # Private key wallet khusus kamu
-OPENSEA_API_KEY=***   # Dari https://opensea.io/account/api
 
 # ─── OPSIONAL: Custom RPC per Chain ───
-# Biarkan kosong kalo mau pake RPC default (Flashbots untuk ETH)
+# Biarkan kosong kalo mau pake RPC default (Ankr untuk ETH)
 # RPC_ETH=https://eth-mainnet.g.alchemy.com/v2/xxx
 # RPC_BASE=https://base-mainnet.g.alchemy.com/v2/xxx
 # RPC_OP=https://optimism-mainnet.g.alchemy.com/v2/xxx
@@ -178,8 +176,7 @@ Dry-run only? (cek doang, gak mint) [y/N] > y
 ```
 
 Selesai. CLI otomatis:
-- **Chain auto-detect** — nyari contract di ETH → Base → OP → Arbitrum → Polygon → BSC
-- Detect tiers + price + jadwal
+- Chain + tiers + price + jadwal detect
 - Cek eligibility wallet kamu
 - Estimasi biaya
 
@@ -218,9 +215,9 @@ Dry-run bakal:
 4. Estimasi gas + total cost
 5. **Tidak ada tx yang dikirim** — aman buat testing
 
-### 4. Contract Langsung (gak perlu OS API Key)
+### 4. Contract Langsung
 
-Kalo males daftar OpenSea API key, tinggal pake contract address:
+Kalo punya contract address, tinggal pake langsung:
 
 ```bash
 # Linux/Mac:
@@ -230,11 +227,11 @@ automint --contract 0xbd3531da5cf5857e7cfaa92426877b022e612cf8 --dry-run
 python automint.py --contract 0xbd3531da5cf5857e7cfaa92426877b022e612cf8 --dry-run
 ```
 
-Chain auto-detect jalan otomatis. Gak butuh `OPENSEA_API_KEY`.
+Wajib pake `--chain` kalo contract address. Contoh: `--contract 0x... --chain base`.
 
 ### 5. Chain Lain / Custom RPC
 
-Chain auto-detect, tapi kalo mau paksa chain tertentu:
+Kalo mau paksa chain tertentu:
 
 ```bash
 # Linux/Mac:
@@ -359,7 +356,7 @@ Kemungkinan: udah mint duluan, gak eligible pas eksekusi, atau contract error.
 
 | Chain | Chain ID | Currency | RPC Default | Explorer |
 |---|---|---|---|---|
-| Ethereum `eth` | 1 | ETH | `rpc.flashbots.net` (private mempool) | etherscan.io |
+| Ethereum `eth` | 1 | ETH | `rpc.flashbots.net` | etherscan.io |
 | Base `base` | 8453 | ETH | `base-rpc.publicnode.com` | basescan.org |
 | Optimism `op` | 10 | ETH | `mainnet.optimism.io` | optimistic.etherscan.io |
 | Arbitrum `arb` | 42161 | ETH | `arb1.arbitrum.io/rpc` | arbiscan.io |
@@ -381,7 +378,7 @@ automint [-h] [--url URL] [--contract CONTRACT] [--chain CHAIN]
 |---|---|
 | `--url URL` | OpenSea collection URL (misal `https://opensea.io/collection/...`) |
 | `--contract CONTRACT` | NFT contract address langsung (`0x...`) |
-| `--chain CHAIN` | Paksa chain (skip auto-detect). Contoh: `eth`, `base`, `polygon` |
+| `--chain CHAIN` | Paksa chain. Wajib kalo pake `--contract`. Contoh: `eth`, `base`, `polygon` |
 | `--rpc RPC` | Custom RPC URL. Override env & default |
 | `--dry-run` | Cek doang — detect + eligibility + estimate, gak kirim tx |
 | `--wallet WALLET` | Wallet index buat multi-account. Contoh: `--wallet 0` atau `--wallet all` buat batch |
@@ -402,7 +399,7 @@ automint-cli/
 ├── automint.log            # Log hasil mint (JSON lines)
 └── src/
     ├── config.py           # Chain config, RPC multichain, env loader, retry
-    ├── detect.py           # OS API resolve + on-chain detect + auto-chain
+    ├── detect.py           # Scrape OS page + on-chain detect + chain resolve
     ├── eligibility.py      # Cek whitelist, free mint, balance, gas estimate
     ├── executor.py         # Build tx, sign, countdown, send, wait receipt
     └── display.py          # Rich CLI output (tables, panel, warna)
@@ -445,14 +442,14 @@ type automint.log
 ## Troubleshooting
 
 ### "OPENSEA_API_KEY not set"
-Isi `OPENSEA_API_KEY` di `.env`. Atau pake `--contract 0x...` langsung (gak butuh OS API).
+Gak dipake lagi. Auto-mint skrg scrape OpenSea page langsung, gak butuh API key. Hapus aja baris `OPENSEA_API_KEY` dari `.env`.
 
 ### ".env permission too open"
 **Linux/Mac:** Jalanin `chmod 600 .env`. Ketik `y` kalo mau lanjut (gak disarankan).
 **Windows:** Abaikan — permission check gak jalan di Windows.
 
-### "Could not auto-detect chain"
-Contract gak ketemu di chain mana pun. Pake `--chain eth` / `--chain base` manual.
+### "Chain required with contract address"
+Contract address butuh `--chain`. Contoh: `automint --contract 0x... --chain base`.
 
 ### "RPC not connected"
 Coba pake `--rpc https://eth-mainnet.g.alchemy.com/v2/xxx`. Atau set `RPC_ETH` di `.env`.

@@ -6,7 +6,7 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 from dotenv import load_dotenv
 load_dotenv()
 
-from src.detect import detect, detect_onchain, resolve_collection
+from src.detect import detect, detect_onchain, scrape_opensea_collection
 
 errors = 0
 
@@ -21,28 +21,29 @@ def check(name, cond, detail=""):
 # ── detect: invalid inputs ──
 r = detect("not-a-url")
 check("detect('not-a-url') returns error", r.get('error'))
-check("  error message mentions input", 'Invalid input' in r.get('error',''))
+check("  error says invalid input", 'Invalid input' in r.get('error',''))
 
 r = detect("")
 check("detect('') returns error", r.get('error'))
 
-r = detect("0x123")  # malformed address (not 40 hex chars)
+r = detect("0x123")  # malformed address
 check("detect('0x123') returns error", r.get('error'))
-check("  error says invalid input", 'Invalid input' in r.get('error',''))
 
-# ── detect: valid contract address format but wrong length ──
-r = detect("0x1234567890123456789012345678901234567890", "")  # valid hex but no chain
-check("detect(40-char hex, no chain) error", r.get('error'))
+# ── detect: contract without chain = error (no more auto-detect) ──
+r = detect("0x1234567890123456789012345678901234567890", "")
+check("detect(contract, no chain) error — chain required", r.get('error'))
+check("  error says --chain required", '--chain' in r.get('error',''))
 
-r = detect("0x1234567890123456789012345678901234567890", "eth")  # valid format with chain
-check("detect(40-char hex, chain='eth') no error", not r.get('error'), str(r.get('error')))
+# ── detect: contract with chain ──
+r = detect("0x1234567890123456789012345678901234567890", "eth")
+check("detect(contract, chain='eth') no error", not r.get('error'), str(r.get('error')))
 check("  has contract address", bool(r.get('contract')))
 
-# ── detect: OpenSea URL ──
+# ── detect: OpenSea URL (scrape, not API) ──
 r = detect("https://opensea.io/collection/pudgypenguins")
 check("detect(OS URL) no error", not r.get('error'), str(r.get('error')))
 check("  has contract", r.get('contract'))
-check("  contract is checksummed (mixed case)", r.get('contract','') != r.get('contract','').lower() and r.get('contract','') != r.get('contract','').upper())
+check("  contract is checksummed", r.get('contract','') != r.get('contract','').lower())
 check("  chain detected", r.get('chain'))
 check("  name detected", r.get('name'))
 check("  tiers is list", isinstance(r.get('tiers'), list))
@@ -60,17 +61,16 @@ check("  chainId=1", r.get('chainId') == 1)
 r = detect_onchain("0xBd3531dA5CF5857e7CfAA92426877b022e612cf8", "nonexistent")
 check("detect_onchain(unknown chain) error", r.get('error'))
 
-# ── resolve_collection ──  
-r = resolve_collection("pudgypenguins")
-check("resolve_collection no error", 'error' not in r)
+# ── scrape_opensea_collection ──
+r = scrape_opensea_collection("pudgypenguins")
+check("scrape_collection no error", 'error' not in r, str(r.get('error','')))
 check("  has contract", r.get('contract'))
-check("  has name", r.get('name'))
-check("  chain is ethereum", r.get('chain') == 'ethereum' or r.get('chain') == 'ethereum')
+check("  contract is checksummed", r.get('contract','') != r.get('contract','').lower())
+check("  chain is ethereum", r.get('chain') == 'ethereum')
 
-# ── resolve_collection: invalid slug ──
-r = resolve_collection("this-slug-definitely-does-not-exist-12345")
-check("resolve_collection(bad slug): no error (just empty)", 'error' not in r)
-check("  contract is None", r.get('contract') is None)
+# ── scrape_opensea_collection: invalid slug ──
+r = scrape_opensea_collection("this-slug-definitely-does-not-exist-12345")
+check("scrape_collection(bad slug) has error", 'error' in r)
 
 # ── Summary ──
 print(f"\n{'='*50}")

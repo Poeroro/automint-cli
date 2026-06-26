@@ -8,7 +8,7 @@ load_dotenv()
 
 from src.config import (
     CHAINS, CHAIN_MAP, get_rpc, get_private_key,
-    get_opensea_api_key, resolve_chain, rpc_retry
+    resolve_chain, rpc_retry
 )
 
 errors = 0
@@ -68,11 +68,6 @@ check("get_rpc(nonexistent)=''", get_rpc('nonexistent') == '')
 pk = get_private_key()
 check("private key starts with 0x", pk.startswith('0x'))
 check("private key length=66", len(pk) == 66)
-
-# ── get_opensea_api_key ──
-os_key = get_opensea_api_key()
-check("OS API key present", len(os_key) > 0, f"len={len(os_key)}")
-check("OS API key length plausible", len(os_key) >= 16, f"len={len(os_key)}")
 
 # ── rpc_retry ──
 check("rpc_retry(success)=42", rpc_retry(lambda: 42) == 42)

@@ -1,60 +1,66 @@
-"""Detect contract + tiers dari OpenSea URL atau contract address."""
+"""Detect contract + tiers from OpenSea URL or contract address."""
 
 import re, time
 import requests
 from web3 import Web3
 
-from .config import get_opensea_api_key, get_rpc, CHAINS, CHAIN_MAP
+from .config import get_rpc, CHAINS, CHAIN_MAP
 from .config import resolve_chain as _resolve_chain
 
-def resolve_collection(slug: str, chain_hint: str = 'ethereum') -> dict:
-    """Cari contract + stages dari OpenSea API v2."""
-    result = {'contract': None, 'chain': chain_hint, 'name': '', 'stages': []}
-    api_key = get_opensea_api_key()
-    if not api_key:
-        result['error'] = 'OPENSEA_API_KEY not set in .env'
-        return result
-    headers = {
-        'X-API-KEY': api_key,
-        'Accept': 'application/json',
-    }
-    # Coba OS API v2
+# ── Known chain identifiers from OpenSea ──
+OS_CHAIN_MAP = {
+    'ethereum': 'ethereum', 'eth': 'ethereum',
+    'base': 'base',
+    'optimism': 'optimism', 'op': 'optimism',
+    'arbitrum': 'arbitrum', 'arb': 'arbitrum',
+    'polygon': 'polygon', 'matic': 'polygon',
+    'bsc': 'bsc', 'binance': 'bsc',
+}
+
+
+def scrape_opensea_collection(slug: str) -> dict:
+    """Scrape OpenSea page HTML for contract address + chain."""
+    result = {'contract': '', 'chain': 'ethereum', 'name': slug}
     try:
-        r = requests.get(
-            f'https://api.opensea.io/v2/collections/{slug}',
-            headers=headers, timeout=10
+        resp = requests.get(
+            f'https://opensea.io/collection/{slug}',
+            headers={'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'},
+            timeout=10
         )
-        if r.ok:
-            d = r.json()
-            result['name'] = d.get('name', slug)
-            contracts = d.get('contracts', [])
-            if contracts:
-                c = contracts[0]
-                result['contract'] = c.get('address', '')
-                chain_str = c.get('chain', 'ethereum').lower()
-                result['chain'] = CHAIN_MAP.get(chain_str, chain_str)
-        elif r.status_code in (401, 403):
-            result['warning'] = 'OPENSEA_API_KEY invalid or expired (HTTP 401/403)'
-    except:
-        pass
+        if not resp.ok:
+            result['error'] = f'HTTP {resp.status_code} fetching collection page'
+            return result
 
-    # Coba v1 API fallback
-    if not result['contract']:
-        try:
-            r = requests.get(
-                f'https://api.opensea.io/api/v1/collection/{slug}',
-                headers=headers, timeout=10
+        html = resp.text
+        # Pattern: chain object then address within ~500 chars
+        # "chain":{"identifier":"ethereum",...}..."address":"0x..."
+        chain_addr = re.search(
+            r'"chain"\s*:\s*\{[^}]*?"identifier"\s*:\s*"([^"]+)"[^}]*?\}'
+            r'[\s\S]{0,500}?"address"\s*:\s*"(0x[a-fA-F0-9]{40})"',
+            html
+        )
+        if not chain_addr:
+            # Try reverse: address then chain
+            chain_addr = re.search(
+                r'"address"\s*:\s*"(0x[a-fA-F0-9]{40})"'
+                r'[\s\S]{0,500}?"chain"\s*:\s*\{[^}]*?"identifier"\s*:\s*"([^"]+)"',
+                html
             )
-            if r.ok:
-                d = r.json().get('collection', {})
-                result['name'] = d.get('name', slug)
-                pac = d.get('primary_asset_contracts', [])
-                if pac:
-                    result['contract'] = pac[0].get('address', '')
-        except:
-            pass
+            if chain_addr:
+                contract, raw_chain = chain_addr.group(1), chain_addr.group(2)
+            else:
+                result['error'] = 'Could not find contract + chain in page'
+                return result
+        else:
+            raw_chain, contract = chain_addr.group(1), chain_addr.group(2)
 
-    return result
+        result['contract'] = Web3.to_checksum_address(contract) if contract else ''
+        result['chain'] = OS_CHAIN_MAP.get(raw_chain.lower(), raw_chain.lower())
+        return result
+
+    except requests.RequestException as e:
+        result['error'] = f'Network error: {e}'
+        return result
 
 
 def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
@@ -85,7 +91,7 @@ def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
         'tiers': [],
     }
 
-    # Coba dapetin max mint global (fallback kalo tier gak punya)
+    # Global max mint (fallback)
     global_max = 0
     global_max_selectors = [
         '0xac5ba77b',  # maxMintAmount
@@ -98,21 +104,23 @@ def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
             resp = w3.eth.call({'to': contract, 'data': sel})
             if resp and resp != '0x' and len(resp) >= 66:
                 val = int(resp, 16)
-                if val > 0 and val < 1000000:
+                if 0 < val < 1000000:
                     global_max = val
                     break
         except:
             pass
 
-    # Coba dapetin nama + symbol
+    # Name + symbol
     try:
         name_bytes = w3.eth.call({'to': contract, 'data': '0x06fdde03'})
         result['name'] = w3.codec.decode(['string'], name_bytes)[0] if len(name_bytes) > 2 else ''
-    except: pass
+    except:
+        pass
     try:
         sym_bytes = w3.eth.call({'to': contract, 'data': '0x95d89b41'})
         result['symbol'] = w3.codec.decode(['string'], sym_bytes)[0] if len(sym_bytes) > 2 else ''
-    except: pass
+    except:
+        pass
 
     now = int(time.time())
 
@@ -143,7 +151,7 @@ def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
         tier_start = None
         tier_sig = ''
 
-        # Cek price
+        # Price
         price_sel = price_selectors.get(tier_name)
         if price_sel:
             try:
@@ -153,9 +161,10 @@ def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
                     if val > 0:
                         tier_price = val / 1e18
                         tier_sig = price_sel
-            except: pass
+            except:
+                pass
 
-        # Cek start time
+        # Start time
         time_sel = time_selectors.get(tier_name)
         if time_sel:
             try:
@@ -165,9 +174,10 @@ def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
                     if ts > 1000000000:
                         tier_start = ts
                         tier_sig = tier_sig or sels[0]
-            except: pass
+            except:
+                pass
 
-        # Cek method exists
+        # Method existence check
         for sel in sels:
             if not tier_sig:
                 try:
@@ -175,7 +185,8 @@ def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
                     if resp and resp != '0x':
                         tier_sig = sel
                         break
-                except: pass
+                except:
+                    pass
 
         if not tier_sig and tier_name != 'Public':
             continue
@@ -191,7 +202,7 @@ def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
         elif tier_name == 'Public':
             status = 'active'
 
-        # Cek max mint per tier
+        # Max mint per tier
         tier_max = 0
         tier_max_sels = []
         if tier_name == 'Public':
@@ -209,7 +220,7 @@ def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
                 resp = w3.eth.call({'to': contract, 'data': sel})
                 if resp and resp != '0x' and len(resp) >= 66:
                     val = int(resp, 16)
-                    if val > 0 and val < 1000000:
+                    if 0 < val < 1000000:
                         tier_max = val
                         break
             except:
@@ -226,7 +237,7 @@ def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
             'maxMint': tier_max,
         })
 
-    # Fallback: mintPrice global
+    # Fallback: global mintPrice
     if not detected:
         try:
             resp = w3.eth.call({'to': contract, 'data': '0x1249c58b'})
@@ -239,54 +250,42 @@ def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
                         'startTime': None, 'status': 'active',
                         'methodSig': '0x1249c58b',
                     })
-        except: pass
+        except:
+            pass
 
     result['tiers'] = detected
     return result
 
 
-def auto_detect_chain(contract: str) -> str | None:
-    """Coba semua chain RPC, timeout 3s per chain."""
-    for name, info in CHAINS.items():
-        rpc = info['rpc']
-        try:
-            w3 = Web3(Web3.HTTPProvider(rpc, request_kwargs={'timeout': 3}))
-            addr = Web3.to_checksum_address(contract)
-            code = w3.eth.get_code(addr)
-            if code and code != '0x' and len(code) > 2:
-                return name
-        except:
-            continue
-    return None
-
-
 def detect(url_or_contract: str, chain_hint: str = '', custom_rpc: str = '') -> dict:
-    """Main detect — URL → resolve → on-chain, or contract langsung."""
+    """Main detect — URL → scrape → on-chain, or contract → on-chain.
+
+    If contract address given WITHOUT --chain, returns error immediately.
+    No more auto-detect loop across 6 chains (was 18s timeout waste).
+    """
     # Contract address langsung
     if re.match(r'^0x[a-fA-F0-9]{40}$', url_or_contract):
         chain_resolved = _resolve_chain(chain_hint)
-        if not chain_resolved and chain_hint:
-            return {'error': 'Chain required for contract address'}
         if not chain_resolved:
-            # Auto-detect chain
-            chain_resolved = auto_detect_chain(url_or_contract)
-            if not chain_resolved:
-                return {'error': 'Could not auto-detect chain. Use --chain eth/base/op/arb/polygon/bsc'}
+            if chain_hint:
+                return {'error': f'Unknown chain: "{chain_hint}". Use: eth/base/op/arb/polygon/bsc'}
+            else:
+                return {'error': 'Chain required with contract address. Use --chain eth/base/op/arb/polygon/bsc'}
         return detect_onchain(url_or_contract, chain_resolved, custom_rpc)
 
-    # OpenSea URL
+    # OpenSea URL — scrape not API
     m = re.search(r'opensea\.io/collection/([^/?#]+)', url_or_contract)
     if m:
         slug = m.group(1)
-        resolved = resolve_collection(slug, chain_hint or 'ethereum')
-        if not resolved['contract']:
-            return {'error': 'Could not resolve contract', 'name': resolved['name'], 'stages': resolved['stages']}
+        pass  # print(f'Scraping OpenSea collection "{slug}"...')
+        resolved = scrape_opensea_collection(slug)
+        if resolved.get('error'):
+            return {'error': resolved['error'], 'name': slug}
         onchain = detect_onchain(resolved['contract'], resolved['chain'], custom_rpc)
-        onchain['name'] = onchain['name'] or resolved['name']
+        if onchain.get('error'):
+            return onchain
+        onchain['name'] = onchain.get('name') or resolved['name']
         onchain['slug'] = slug
-        # Merge OS stages kalo on-chain tiers kosong
-        if not onchain['tiers'] and resolved['stages']:
-            onchain['tiers'] = resolved['stages']
         return onchain
 
     return {'error': 'Invalid input — use OpenSea URL or 0x contract address'}

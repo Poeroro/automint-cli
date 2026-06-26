@@ -22,7 +22,7 @@ from src.display import (
     show_banner, show_detect_result, show_eligibility,
     show_cost_estimate, show_report, show_wallets, show_gas_menu, console
 )
-from src.config import resolve_chain, get_rpc, get_opensea_api_key, CHAINS, get_all_wallets
+from src.config import resolve_chain, get_rpc, CHAINS, get_all_wallets
 from web3 import Web3
 
 
@@ -236,17 +236,6 @@ def show_batch_summary():
 
 def main():
     check_env_file()
-
-    # ── Wajib: OpenSea API Key ──
-    if not get_opensea_api_key():
-        console.print('[red]✕ OPENSEA_API_KEY not set in .env[/red]')
-        console.print()
-        console.print('  Daftar API key gratis di [link=https://opensea.io/account/api]https://opensea.io/account/api[/link]')
-        console.print('  lalu tambahkan ke .env:')
-        console.print('  [yellow]OPENSEA_API_KEY=your_key_here[/yellow]')
-        console.print()
-        console.print('  [dim]Atau gunakan --contract + --chain langsung (tanpa URL OpenSea)[/dim]')
-        sys.exit(1)
 
     args = parse_args()
     show_banner()

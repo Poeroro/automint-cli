@@ -17,7 +17,7 @@ def rpc_retry(fn, max_attempts=3, delay=2):
 
 
 CHAINS = {
-    'ethereum': {'id': 1, 'rpc': 'https://rpc.flashbots.net', 'currency': 'ETH', 'explorer': 'etherscan.io'},
+    'ethereum': {'id': 1, 'rpc': 'https://ethereum.publicnode.com', 'currency': 'ETH', 'explorer': 'etherscan.io'},
     'base':     {'id': 8453, 'rpc': 'https://base-rpc.publicnode.com', 'currency': 'ETH', 'explorer': 'basescan.org'},
     'optimism': {'id': 10, 'rpc': 'https://mainnet.optimism.io', 'currency': 'ETH', 'explorer': 'optimistic.etherscan.io'},
     'arbitrum': {'id': 42161, 'rpc': 'https://arb1.arbitrum.io/rpc', 'currency': 'ETH', 'explorer': 'arbiscan.io'},
@@ -45,10 +45,6 @@ def get_rpc(chain_name: str) -> str:
             return val
     info = CHAINS.get(chain_name)
     return info['rpc'] if info else ''
-
-def get_opensea_api_key() -> str:
-    """Ambil OS API key dari env. Wajib diisi."""
-    return os.getenv('OPENSEA_API_KEY', '')
 
 def get_private_key() -> str:
     pk = os.getenv('PRIVATE_KEY', '')
