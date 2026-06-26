@@ -47,8 +47,10 @@ Gak perlu ribet. Tinggal `automint` → paste URL → enter → selesai.
 ## Install
 
 ```bash
-# Clone repo
+# Clone repo (SSH — butuh key github)
 git clone git@github.com:Poeroro/automint-cli.git
+# Atau HTTPS (gak perlu setup SSH)
+git clone https://github.com/Poeroro/automint-cli.git
 cd automint-cli
 
 # Buat virtual environment
@@ -58,7 +60,7 @@ python3 -m venv venv
 source venv/bin/activate
 
 # Install semua dependency
-pip install -r requirements.txt
+python3 -m pip install -r requirements.txt
 ```
 
 ## Setup `.env`
@@ -101,15 +103,22 @@ chmod 600 .env
 Supaya tinggal ketik `automint` dari mana aja:
 
 ```bash
-# Buat wrapper bash (butuh path project yang benar)
+# Buat wrapper bash — langsung deteksi venv di folder project
 sudo tee /usr/local/bin/automint > /dev/null << 'SCRIPT'
 #!/bin/bash
-cd /path/ke/automint-cli && exec ./venv/bin/python3 automint.py "$@"
+cd "$(dirname "$0")" 2>/dev/null || cd /path/ke/automint-cli
+if [ -f "venv/bin/python3" ]; then
+    exec venv/bin/python3 automint.py "$@"
+elif [ -f ".venv/bin/python3" ]; then
+    exec .venv/bin/python3 automint.py "$@"
+else
+    exec python3 automint.py "$@"
+fi
 SCRIPT
 sudo chmod +x /usr/local/bin/automint
 
 # Ganti /path/ke/automint-cli dengan directory project kamu
-# Contoh: cd /home/user/automint-cli
+# Contoh: /home/user/automint-cli
 ```
 
 Selesai. Sekarang tinggal `automint` enter.
