@@ -134,7 +134,7 @@ sudo chmod +x /usr/local/bin/automint
 #   venv\Scripts\python automint.py [args]
 ```
 
-Selesai. Sekarang tinggal `automint` enter.
+Selesai. Sekarang tinggal `automint` enter (Linux/Mac) atau `python automint.py` (Windows).
 
 ---
 
@@ -145,7 +145,11 @@ Selesai. Sekarang tinggal `automint` enter.
 Cukup ketik:
 
 ```bash
+# Linux/Mac:
 automint
+
+# Windows:
+python automint.py
 ```
 
 Nanti muncul:
@@ -180,11 +184,13 @@ Selesai. CLI otomatis:
 Kalo udah tau mau mint apa, langsung kasih argumen:
 
 ```bash
-# Dari OpenSea URL
+# Linux/Mac:
 automint --url https://opensea.io/collection/pudgy-penguins
-
-# Dari contract address (gak perlu OS API key)
 automint --contract 0xbd3531da5cf5857e7cfaa92426877b022e612cf8
+
+# Windows:
+python automint.py --url https://opensea.io/collection/pudgy-penguins
+python automint.py --contract 0xbd3531da5cf5857e7cfaa92426877b022e612cf8
 ```
 
 ### 3. Dry-Run (coba dulu, gak ngirim tx)
