@@ -52,16 +52,24 @@ def _fmt_duration(secs: int) -> str:
     return f'{h:02d}:{m:02d}:{s:02d}'
 
 
-def execute_mint(contract: str, chain: str, tier: dict, custom_rpc: str = '', quantity: int = 1) -> dict:
-    """Build tx, sign, send, wait receipt. Return report."""
+def execute_mint(contract: str, chain: str, tier: dict, custom_rpc: str = '', quantity: int = 1, private_key_override: str = '') -> dict:
+    """Build tx, sign, send, wait receipt. Return report.
+       private_key_override — untuk multi-account, pake key tertentu."""
     rpc = custom_rpc or get_rpc(chain)
     w3 = Web3(Web3.HTTPProvider(rpc))
     if not w3.is_connected():
         return {'status': 'error', 'message': 'RPC not connected'}
 
-    acct, err = get_wallet(w3)
-    if err:
-        return {'status': 'error', 'message': err}
+    # Pake key tertentu (multi-account), atau default dari env
+    if private_key_override:
+        try:
+            acct = Account.from_key(private_key_override)
+        except:
+            return {'status': 'error', 'message': 'Invalid private key'}
+    else:
+        acct, err = get_wallet(w3)
+        if err:
+            return {'status': 'error', 'message': err}
 
     wallet = acct.address
 

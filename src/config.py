@@ -53,6 +53,29 @@ def get_private_key() -> str:
         pk = '0x' + pk
     return pk
 
+def get_all_wallets() -> list:
+    """Load semua wallet dari env. Format: PRIVATE_KEYS=0x...,0x..., atau PRIVATE_KEY=..."""
+    from web3 import Account
+    keys_str = os.getenv('PRIVATE_KEYS', '')
+    if keys_str.strip():
+        raw_keys = [k.strip() for k in keys_str.split(',') if k.strip()]
+    else:
+        pk = os.getenv('PRIVATE_KEY', '')
+        if pk.strip():
+            raw_keys = [pk.strip()]
+        else:
+            return []
+    wallets = []
+    for pk in raw_keys:
+        if not pk.startswith('0x'):
+            pk = '0x' + pk
+        try:
+            acct = Account.from_key(pk)
+            wallets.append({'account': acct, 'address': acct.address, 'private_key': pk})
+        except:
+            continue
+    return wallets
+
 def resolve_chain(input_str: str) -> str | None:
     """'eth' → 'ethereum', 'matic' → 'polygon', dll."""
     key = input_str.strip().lower()

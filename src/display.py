@@ -124,6 +124,32 @@ def show_cost_estimate(est: dict, currency: str = 'ETH'):
     console.print(f'  [bold]Total:      [cyan]{est["total_eth"]:.6f} {currency}[/cyan][/bold]')
 
 
+def show_wallets(wallets_info: list, currency: str = 'ETH'):
+    """Tampilkan tabel wallet + balance + eligible tier."""
+    table = Table(box=box.ROUNDED, header_style='bold')
+    table.add_column('#', style='dim')
+    table.add_column('Address')
+    table.add_column('Balance', justify='right')
+    table.add_column('Eligible Tier')
+
+    for i, w in enumerate(wallets_info):
+        addr = w['address']
+        bal = w['balance_eth']
+        best = w.get('best_tier')
+        if best:
+            tier_str = f'[green]{best["name"]}[/green]'
+            if best['price'] > 0:
+                tier_str += f' ({best["price"]} {currency})'
+            else:
+                tier_str += ' ([green]FREE[/green])'
+        else:
+            tier_str = '[dim]—[/dim]'
+        table.add_row(str(i), f'[cyan]{addr[:10]}...{addr[-6:]}[/cyan]',
+                      f'{bal:.6f} {currency}', tier_str)
+
+    console.print(table)
+
+
 def show_report(report: dict, chain: str = ''):
     """Tampilkan laporan hasil mint."""
     status = report.get('status', 'unknown')

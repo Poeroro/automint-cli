@@ -7,7 +7,7 @@ Usage:
   automint --url https://...         # langsung dari URL
   automint --contract 0x... --chain eth [--rpc ...] [--dry-run]
 
-Flow: input → detect → eligibility → pilih tier → countdown → execute → report
+Flow: input → detect → load wallets → eligibility → pilih wallet + tier → execute
 """
 
 import sys, os, time, argparse, json
@@ -17,16 +17,17 @@ load_dotenv()
 
 from src.detect import detect
 from src.eligibility import check_eligibility, estimate_total_cost
-from src.executor import execute_mint, wait_for_countdown, get_wallet
+from src.executor import execute_mint, wait_for_countdown
 from src.display import (
     show_banner, show_detect_result, show_eligibility,
-    show_cost_estimate, show_report, console
+    show_cost_estimate, show_report, show_wallets, console
 )
-from src.config import resolve_chain, get_rpc, get_opensea_api_key, CHAINS
+from src.config import resolve_chain, get_rpc, get_opensea_api_key, CHAINS, get_all_wallets
 from web3 import Web3
 
 
 LOG_FILE = 'automint.log'
+BATCH_RESULTS = []
 
 
 def check_env_file():
@@ -91,6 +92,7 @@ Contoh:
     p.add_argument('--chain', default='', help='Chain: eth/base/op/arb/polygon/bsc')
     p.add_argument('--rpc', default='', help='Custom RPC URL (override env/default)')
     p.add_argument('--dry-run', action='store_true', help='Detect + estimate only, no mint')
+    p.add_argument('--wallet', type=int, default=-1, help='Wallet index (multi-account, default: pilih)')
     return p.parse_args()
 
 
@@ -115,6 +117,135 @@ def prompt_input(args):
         dry_run = ans == 'y'
 
     return val, args.chain, rpc, dry_run
+
+
+def select_tier_interactive(eligible_tiers, currency):
+    """Pilih tier dari eligible. Return tier dict."""
+    if len(eligible_tiers) == 1:
+        selected = eligible_tiers[0]
+        console.print(f'\n[green]→ Auto-selected: {selected["name"]}[/green]')
+        return selected
+
+    console.print('\n[bold]Select tier:[/bold]')
+    for i, t in enumerate(eligible_tiers, 1):
+        price = f'{t["price"]} {currency}' if t['price'] > 0 else 'FREE'
+        console.print(f'  [cyan]{i}.[/cyan] {t["name"]} ({price})')
+    try:
+        choice = int(input('\n> ').strip())
+        return eligible_tiers[choice - 1]
+    except (ValueError, IndexError):
+        console.print('[red]Invalid choice[/red]')
+        sys.exit(1)
+
+
+def prompt_quantity(tier, currency):
+    """Minta quantity kalo maxMint > 1."""
+    max_mint = tier.get('maxMint', 0)
+    quantity = 1
+    if max_mint > 1:
+        console.print(f'\n[bold]Quantity:[/bold] Max mint per tx = [cyan]{max_mint}[/cyan]')
+        try:
+            ans = input(f'How many? [1-{max_mint}, enter=1] > ').strip()
+            if ans:
+                q = int(ans)
+                if q < 1 or q > max_mint:
+                    console.print(f'[red]Must be 1-{max_mint}[/red]')
+                    sys.exit(1)
+                quantity = q
+        except (ValueError, EOFError, KeyboardInterrupt):
+            quantity = 1
+        if quantity > 1:
+            console.print(f'[green]→ Minting {quantity} NFTs[/green]')
+    return quantity
+
+
+def do_mint(w3, contract, chain, tier, custom_rpc, quantity, wallet_info, dry_run, currency):
+    """Proses mint untuk satu wallet. Handle countdown + execute."""
+    tier_data = tier  # sudah dari tiers
+    status = tier.get('status', 'unknown')
+
+    if status and status.startswith('scheduled:'):
+        ts = int(status.split(':')[1])
+        console.print(f'\n[bold]⏳ Countdown:[/bold] {tier["name"]} opens at {time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(ts))}')
+        console.print('[yellow]Auto-mint when countdown ends?[/yellow]')
+        try:
+            ans = input('[y/N] > ').strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            ans = 'n'
+        if ans != 'y':
+            console.print('[dim]Skipped.[/dim]')
+            return None
+        ok = wait_for_countdown(ts, tier['name'])
+        if not ok:
+            return None
+
+    elif status == 'active' or not status:
+        console.print(f'\n[green]Tier {tier["name"]} is LIVE![/green]')
+        console.print('[yellow]Mint now?[/yellow]')
+        try:
+            ans = input('[y/N] > ').strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            ans = 'n'
+        if ans != 'y':
+            console.print('[dim]Skipped.[/dim]')
+            return None
+
+    # Execute
+    qty_note = f' × {quantity}' if quantity > 1 else ''
+    addr_short = f'{wallet_info["address"][:10]}...{wallet_info["address"][-6:]}'
+    console.print(f'\n[bold]🚀 {addr_short} →[/bold] {tier["name"]} @ {currency} {tier["price"]}{qty_note}')
+
+    if dry_run:
+        console.print('[yellow]── Dry-run — exiting ──[/yellow]')
+        sys.exit(0)
+
+    report = execute_mint(contract, chain, tier_data, custom_rpc, quantity, wallet_info['private_key'])
+
+    # Show report
+    show_report(report, chain)
+
+    # Log
+    log_entry = {
+        'timestamp': time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime()),
+        'wallet': wallet_info['address'],
+        'chain': chain,
+        'contract': contract,
+        'tier': tier['name'],
+        'price': tier.get('price', 0),
+        'quantity': quantity,
+        'status': report['status'],
+        'tx_hash': report.get('tx_hash', ''),
+    }
+    append_log(log_entry)
+
+    BATCH_RESULTS.append({
+        'wallet': wallet_info['address'],
+        'tier': tier['name'],
+        'quantity': quantity,
+        'status': report['status'],
+        'tx_hash': report.get('tx_hash', ''),
+    })
+
+    return report
+
+
+def show_batch_summary():
+    """Tampilkan ringkasan batch mint."""
+    if not BATCH_RESULTS:
+        return
+    success = [r for r in BATCH_RESULTS if r['status'] == 'success']
+    failed = [r for r in BATCH_RESULTS if r['status'] != 'success']
+    total_nft = sum(r['quantity'] for r in success)
+
+    console.print('\n')
+    console.print('═' * 50)
+    console.print(f'[bold]📊 Batch Summary[/bold]')
+    console.print(f'  ✅ {len(success)} success ({total_nft} NFT minted)')
+    if failed:
+        console.print(f'  ❌ {len(failed)} failed')
+        for r in failed:
+            console.print(f'     {r["wallet"][:10]}... — {r["status"]}: {r.get("tx_hash", "?")[:18]}...')
+    console.print('═' * 50)
 
 
 def main():
@@ -163,7 +294,7 @@ def main():
         console.print('[yellow]No tiers detected. Cannot proceed.[/yellow]')
         sys.exit(1)
 
-    # ── Step 1.5: RPC + ChainId ──
+    # ── RPC ──
     rpc = custom_rpc or get_rpc(chain)
     w3 = Web3(Web3.HTTPProvider(rpc))
     if not w3.is_connected():
@@ -174,134 +305,158 @@ def main():
             if input('Force continue? [y/N] > ').strip().lower() != 'y':
                 sys.exit(1)
 
-    # ── Step 2: Wallet ──
-    acct, err = get_wallet(w3)
-    if err:
-        console.print(f'[red]✕ {err}[/red]')
+    # ── Step 2: Load all wallets ──
+    all_wallets = get_all_wallets()
+    if not all_wallets:
+        console.print('[red]✕ No wallets found. Set PRIVATE_KEY or PRIVATE_KEYS in .env[/red]')
         sys.exit(1)
 
-    wallet = acct.address
-    balance_wei = w3.eth.get_balance(wallet)
-    balance_eth = balance_wei / 1e18
+    console.print(f'\n[bold]👛 Wallets loaded:[/bold] {len(all_wallets)}')
+    console.print()
 
-    console.print(f'\n[bold]👛 Wallet:[/bold] [cyan]{wallet[:10]}...{wallet[-6:]}[/cyan]')
-    console.print(f'[bold]💰 Balance:[/bold] [cyan]{balance_eth:.6f} {currency}[/cyan]')
+    # ── Step 3: Eligibility per wallet ──
+    wallets_info = []
+    for w in all_wallets:
+        address = w['address']
+        balance_wei = w3.eth.get_balance(address)
+        balance_eth = balance_wei / 1e18
 
-    # ── Step 3: Eligibility ──
-    console.print('\n[bold]🔎 Checking eligibility...[/bold]')
-    elig_results = check_eligibility(contract, chain, wallet, tiers, custom_rpc)
-    show_eligibility(elig_results, wallet, balance_eth, currency)
+        elig = check_eligibility(contract, chain, address, tiers, custom_rpc)
+        eligible_tiers = [t for t in elig if t['eligible']]
 
-    eligible_tiers = [t for t in elig_results if t['eligible']]
-    if not eligible_tiers:
-        console.print('[red]✕ Wallet not eligible for any tier[/red]')
-        sys.exit(1)
+        best = eligible_tiers[0] if eligible_tiers else None
 
-    # ── Step 4: Pilih Tier ──
-    selected = None
-    if len(eligible_tiers) == 1:
-        selected = eligible_tiers[0]
-        console.print(f'\n[green]→ Auto-selected: {selected["name"]}[/green]')
-    else:
-        console.print('\n[bold]Select tier:[/bold]')
-        for i, t in enumerate(eligible_tiers, 1):
-            price = f'{t["price"]} {currency}' if t['price'] > 0 else 'FREE'
-            console.print(f'  [cyan]{i}.[/cyan] {t["name"]} ({price})')
-        try:
-            choice = int(input('\n> ').strip())
-            selected = eligible_tiers[choice - 1]
-        except (ValueError, IndexError):
-            console.print('[red]Invalid choice[/red]')
-            sys.exit(1)
+        wallets_info.append({
+            **w,
+            'balance_wei': balance_wei,
+            'balance_eth': balance_eth,
+            'eligibility': elig,
+            'eligible_tiers': eligible_tiers,
+            'best_tier': best,
+        })
 
-    # ── Step 4.5: Quantity ──
-    max_mint = selected.get('maxMint', 0)
-    quantity = 1
-    if max_mint > 1:
-        console.print(f'\n[bold]Quantity:[/bold] Max mint per tx = [cyan]{max_mint}[/cyan]')
-        try:
-            ans = input(f'How many? [1-{max_mint}, enter=1] > ').strip()
-            if ans:
-                q = int(ans)
-                if q < 1 or q > max_mint:
-                    console.print(f'[red]Must be 1-{max_mint}[/red]')
-                    sys.exit(1)
-                quantity = q
-        except (ValueError, EOFError, KeyboardInterrupt):
-            quantity = 1
-        if quantity > 1:
-            console.print(f'[green]→ Minting {quantity} NFTs[/green]')
+    # ── Step 4: Loop wallet → tier → quantity → execute ──
+    first_pass = True
+    while True:
+        # Filter eligible wallets
+        eligible_wallets = [w for w in wallets_info if w['best_tier']]
+        if not eligible_wallets:
+            console.print('[red]✕ No wallet eligible for any tier[/red]')
+            break
 
-    # ── Step 5: Cost Estimate ──
-    console.print('\n[bold]💰 Estimating cost...[/bold]')
-    est = estimate_total_cost(contract, chain, wallet, selected, custom_rpc, quantity)
-    show_cost_estimate(est, currency)
+        if first_pass:
+            console.print(f'\n[bold]🔎 Eligibility Check[/bold]')
+            show_wallets(eligible_wallets, currency)
 
-    if est.get('error'):
-        sys.exit(1)
+        # Pilih wallet
+        wallet_index = args.wallet
+        if wallet_index < 0:
+            if len(eligible_wallets) == 1 and first_pass:
+                wallet_index = 0
+                console.print(f'\n[green]→ Auto-selected wallet 0: {eligible_wallets[0]["address"][:10]}...[/green]')
+            else:
+                options = ' / '.join(str(i) for i in range(len(eligible_wallets)))
+                if len(eligible_wallets) > 1:
+                    options += " / 'all' untuk batch"
+                try:
+                    ans = input(f'\nSelect wallet [{options}] > ').strip().lower()
+                    if ans == 'all':
+                        wallet_index = 'all'
+                    else:
+                        wallet_index = int(ans)
+                except (ValueError, EOFError, KeyboardInterrupt):
+                    if first_pass:
+                        wallet_index = 0
+                    else:
+                        break
 
-    if est['total_wei'] > balance_wei:
-        console.print(f'\n[red]✕ Insufficient balance! Need {est["total_eth"]:.6f} {currency}, have {balance_eth:.6f} {currency}[/red]')
-        sys.exit(1)
-    else:
-        console.print(f'\n[green]✅ Balance sufficient ({balance_eth:.6f} >= {est["total_eth"]:.6f})[/green]')
+        if wallet_index == 'all':
+            # Batch — semua wallet pake tier + quantity yang sama
+            # Pilih tier dari wallet pertama
+            if not eligible_wallets:
+                break
+            first_wallet = eligible_wallets[0]
+            selected_tier = select_tier_interactive(first_wallet['eligible_tiers'], currency)
+            quantity = prompt_quantity(selected_tier, currency)
 
-    if dry_run:
-        console.print('\n[yellow]── Dry-run mode — exiting ──[/yellow]')
-        sys.exit(0)
+            console.print(f'\n[bold]═══ Batch mint: {len(eligible_wallets)} wallets ═══[/bold]')
 
-    # ── Step 6: Countdown ──
-    tier_data = next((t for t in tiers if t['name'] == selected['name']), tiers[0])
-    status = tier_data.get('status', 'unknown')
+            for w in eligible_wallets:
+                # Cari tier yg sama di wallet ini
+                match = [t for t in w['eligible_tiers'] if t['name'] == selected_tier['name']]
+                if not match:
+                    console.print(f'  [dim]{w["address"][:10]}... — no {selected_tier["name"]} eligible, skip[/dim]')
+                    continue
+                tier_for_wallet = match[0]
+                do_mint(w3, contract, chain, tier_for_wallet, custom_rpc, quantity, w, dry_run, currency)
 
-    if status and status.startswith('scheduled:'):
-        ts = int(status.split(':')[1])
-        console.print(f'\n[bold]⏳ Countdown:[/bold] {selected["name"]} opens at {time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(ts))}')
-        console.print('[yellow]Auto-mint when countdown ends?[/yellow]')
-        try:
-            ans = input('[y/N] > ').strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            ans = 'n'
+            break
 
-        if ans != 'y':
-            console.print('[dim]Cancelled. Exiting.[/dim]')
-            sys.exit(0)
+        elif 0 <= wallet_index < len(eligible_wallets):
+            wallet_info = eligible_wallets[wallet_index]
+            addr_short = f'{wallet_info["address"][:10]}...{wallet_info["address"][-6:]}'
+            console.print(f'\n[bold]→ Wallet {wallet_index}:[/bold] [cyan]{addr_short}[/cyan]')
 
-        ok = wait_for_countdown(ts, selected['name'])
-        if not ok:
-            sys.exit(0)
+            # Cek eligibility detail + estimate
+            show_eligibility(wallet_info['eligibility'], wallet_info['address'],
+                           wallet_info['balance_eth'], currency)
 
-    elif status == 'active' or not status:
-        console.print(f'\n[green]Tier {selected["name"]} is LIVE![/green]')
-        console.print('[yellow]Mint now?[/yellow]')
-        try:
-            ans = input('[y/N] > ').strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            ans = 'n'
-        if ans != 'y':
-            console.print('[dim]Cancelled. Exiting.[/dim]')
-            sys.exit(0)
+            if not wallet_info['eligible_tiers']:
+                console.print('[red]✕ No eligible tier[/red]')
+                if not first_pass:
+                    break
+                continue
 
-    # ── Step 7: Execute ──
-    qty_note = f' × {quantity}' if quantity > 1 else ''
-    console.print(f'\n[bold]🚀 Executing mint:[/bold] {selected["name"]} @ {currency} {selected["price"]}{qty_note}')
-    report = execute_mint(contract, chain, tier_data, custom_rpc, quantity)
+            # Pilih tier
+            selected_tier = select_tier_interactive(wallet_info['eligible_tiers'], currency)
 
-    # ── Step 8: Report ──
-    show_report(report, chain)
+            # Quantity
+            quantity = prompt_quantity(selected_tier, currency)
 
-    # ── Log ──
-    log_entry = {
-        'timestamp': time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime()),
-        'chain': chain,
-        'contract': contract,
-        'tier': selected['name'],
-        'price': selected.get('price', 0),
-        'status': report['status'],
-        'tx_hash': report.get('tx_hash', ''),
-    }
-    append_log(log_entry)
-    console.print(f'[dim]📝 Logged to {LOG_FILE}[/dim]')
+            # Cost estimate
+            console.print('\n[bold]💰 Estimating cost...[/bold]')
+            est = estimate_total_cost(contract, chain, wallet_info['address'], selected_tier, custom_rpc, quantity)
+            show_cost_estimate(est, currency)
+
+            if est.get('error'):
+                if not first_pass:
+                    break
+                continue
+
+            if est['total_wei'] > wallet_info['balance_wei']:
+                console.print(f'\n[red]✕ Insufficient balance! Need {est["total_eth"]:.6f} {currency}[/red]')
+                if not first_pass:
+                    break
+                continue
+            else:
+                console.print(f'\n[green]✅ Balance sufficient ({wallet_info["balance_eth"]:.6f} >= {est["total_eth"]:.6f})[/green]')
+
+            if dry_run:
+                console.print('\n[yellow]── Dry-run mode — exiting ──[/yellow]')
+                sys.exit(0)
+
+            # Execute
+            do_mint(w3, contract, chain, selected_tier, custom_rpc, quantity, wallet_info, dry_run, currency)
+
+        else:
+            console.print('[red]Invalid selection[/red]')
+            break
+
+        # Tanya lanjut
+        first_pass = False
+        if wallet_index != 'all':
+            others = [w for w in eligible_wallets
+                     if w['address'] != eligible_wallets[wallet_index]['address'] and w['best_tier']]
+            if others:
+                ans = input('\nMint another wallet? [y/N] > ').strip().lower()
+                if ans != 'y':
+                    break
+            else:
+                break
+        else:
+            break
+
+    show_batch_summary()
 
 
 if __name__ == '__main__':
