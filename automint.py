@@ -31,7 +31,7 @@ BATCH_RESULTS = []
 
 
 def check_env_file():
-    """Cek .env exist + permission 600."""
+    """Cek .env exist + permission 600 (Linux/Mac only)."""
     env_path = '.env'
     if not os.path.exists(env_path):
         console.print('[yellow]⚠ .env file not found![/yellow]')
@@ -42,13 +42,14 @@ def check_env_file():
         if input('Continue without .env? (hanya contract langsung tanpa OS API) [y/N] > ').strip().lower() != 'y':
             sys.exit(1)
         return
-    mode = os.stat(env_path).st_mode & 0o777
-    if mode > 0o600:
-        console.print(f'[red]⚠ .env permission {oct(mode)} — too open! Run:[/red]')
-        console.print(f'  [yellow]chmod 600 {env_path}[/yellow]')
-        console.print()
-        if input('Continue anyway? [y/N] > ').strip().lower() != 'y':
-            sys.exit(1)
+    if os.name == 'posix':
+        mode = os.stat(env_path).st_mode & 0o777
+        if mode > 0o600:
+            console.print(f'[red]⚠ .env permission {oct(mode)} — too open! Run:[/red]')
+            console.print(f'  [yellow]chmod 600 {env_path}[/yellow]')
+            console.print()
+            if input('Continue anyway? [y/N] > ').strip().lower() != 'y':
+                sys.exit(1)
 
 
 def verify_chain_id(w3: Web3, chain: str) -> bool:

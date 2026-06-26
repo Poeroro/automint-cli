@@ -97,7 +97,11 @@ OPENSEA_API_KEY=***   # Dari https://opensea.io/account/api
 **Wajib:** kunci file `.env` biar gak kebaca orang lain:
 
 ```bash
+# Linux/Mac
 chmod 600 .env
+
+# Windows — gak perlu chmod (NTFS permission beda sistem).
+# Cukup pastikan file gak di-share publik.
 ```
 
 > CLI otomatis ngecek permission `.env`. Kalo terlalu terbuka (＞600), bakal muncul warning merah dan minta konfirmasi.
