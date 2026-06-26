@@ -405,6 +405,10 @@ def main():
             est = estimate_total_cost(contract, chain, wallet_info['address'], selected_tier, custom_rpc, quantity)
             show_cost_estimate(est, currency)
 
+            if dry_run:
+                console.print('\n[yellow]── Dry-run mode — exiting ──[/yellow]')
+                sys.exit(0)
+
             if est.get('error'):
                 console.print(f'[yellow]⚠ Gas estimate failed: {est["error"]}[/yellow]')
                 console.print('[yellow]  Proceeding anyway — user bear risk of failed tx[/yellow]')
@@ -417,10 +421,6 @@ def main():
                 continue
             else:
                 console.print(f'\n[green]✅ Balance sufficient ({wallet_info["balance_eth"]:.6f} >= {est["total_eth"]:.6f})[/green]')
-
-            if dry_run:
-                console.print('\n[yellow]── Dry-run mode — exiting ──[/yellow]')
-                sys.exit(0)
 
             # Gas selection
             gas_params = show_gas_menu(w3, chain)

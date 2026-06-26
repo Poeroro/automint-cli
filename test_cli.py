@@ -35,8 +35,8 @@ check("--help: shows --wallet", '--wallet' in out)
 
 # ── CLI: no args ──
 code, out, err = run([])
-check("no args: exit 2", code == 2, f"code={code}")
-check("no args: error message", 'error: one of the arguments' in err)
+check("no args: exit 1 (interactive mode)", code == 1, f"code={code}")
+check("no args: prompts for input", 'Target NFT' in out or 'contract address' in out)
 
 # ── CLI: invalid input ──
 code, out, err = run(['--url', 'not-a-url'])
@@ -45,7 +45,7 @@ check("--url invalid: error message", 'Invalid input' in out)
 
 # ── CLI: --url with real OS URL ──
 code, out, err = run(['--url', 'https://opensea.io/collection/pudgypenguins', '--dry-run'], timeout=30)
-check("--url pudgypenguins --dry-run: exit 1 (est gas fails on dummy wallet)", code == 1, f"code={code}")
+check("--url pudgypenguins --dry-run: exit 0 (dry-run sukses)", code == 0, f"code={code}")
 check("  — banner shown", '✦ AutoMint CLI' in out)
 check("  — collection detected", 'PudgyPenguins' in out or 'Pudgy' in out)
 check("  — contract resolved", '0x' in out)
@@ -55,7 +55,7 @@ check("  — no crash traceback", 'Traceback' not in out and 'Traceback' not in 
 
 # ── CLI: --contract + --chain ──
 code, out, err = run(['--contract', '0xBd3531dA5CF5857e7CfAA92426877b022e612cf8', '--chain', 'eth', '--dry-run'], timeout=30)
-check("--contract pudgy --chain eth --dry-run: exit 1 (est gas fails)", code == 1, f"code={code}")
+check("--contract pudgy --chain eth --dry-run: exit 0", code == 0, f"code={code}")
 check("  — collection detected", 'PudgyPenguins' in out or 'Pudgy' in out)
 check("  — chain eth resolved", 'ethereum' in out)
 check("  — no traceback", 'Traceback' not in out)
@@ -64,20 +64,19 @@ check("  — no traceback", 'Traceback' not in out)
 check("  — chain alias resolved", 'ethereum' in out and 'ID: 1' in out)
 
 # ── CLI: --rpc override ──
-code, out, err = run(['--contract', '0xBd3531dA5CF5857e7CfAA92426877b022e612cf8', '--chain', 'eth', '--rpc', 'https://eth.drpc.org', '--dry-run'], timeout=30)
+code, out, err = run(['--contract', '0xBd3531dA5CF5857e7CfAA92426877b022e612cf8', '--chain', 'eth', '--rpc', 'https://ethereum.publicnode.com', '--dry-run'], timeout=30)
 check("--rpc override: works", 'Traceback' not in out and 'Traceback' not in err, f"err={err[:200]}")
 check("  — detects OK with custom rpc", 'PudgyPenguins' in out or 'Pudgy' in out)
 
 # ── CLI: chain mismatch with custom RPC ──
-code, out, err = run(['--contract', '0xBd3531dA5CF5857e7CfAA92426877b022e612cf8', '--chain', 'base', '--rpc', 'https://eth.drpc.org', '--dry-run'], timeout=15)
+code, out, err = run(['--contract', '0xBd3531dA5CF5857e7CfAA92426877b022e612cf8', '--chain', 'base', '--rpc', 'https://ethereum.publicnode.com', '--dry-run'], timeout=15)
 check("--chain base + --rpc eth: mismatch detected", 'Chain mismatch' in out or 'Chain mismatch' in err)
 check("  — shows chain id", 'chainId=1' in out or 'chainId=1' in err)
 check("  — exit=1 (user declined force continue)", code == 1, f"code={code}")
 
-# ── CLI: invalid chain → fallback ke ethereum ──
+# ── CLI: invalid chain → error (gak ada fallback lagi) ──
 code, out, err = run(['--contract', '0x1234567890123456789012345678901234567890', '--chain', 'invalid', '--dry-run'], timeout=15)
-check("--chain invalid: fallback to ethereum", 'ethereum' in out and 'ID:' in out)
-check("  — shows chain fallback warning", 'Unknown chain' in out)
+check("--chain invalid: error shown", 'Unknown chain' in out)
 
 # ── CLI: multiple tiers (test display code path) ──
 code, out, err = run(['--url', 'https://opensea.io/collection/pudgypenguins', '--dry-run'], timeout=30)
