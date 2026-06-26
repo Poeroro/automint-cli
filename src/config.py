@@ -35,11 +35,14 @@ CHAIN_MAP = {
 }
 
 def get_rpc(chain_name: str) -> str:
-    """Ambil RPC: env > public default. Env key: RPC_CHAINNAME (uppercase)."""
-    env_key = f'RPC_{chain_name.upper()}'
-    custom = os.getenv(env_key)
-    if custom:
-        return custom
+    """Ambil RPC: env > public default. Env key: RPC_ETH, RPC_BASE, dll."""
+    short_key = {'ethereum': 'ETH', 'base': 'BASE', 'optimism': 'OP',
+                 'arbitrum': 'ARB', 'polygon': 'POLYGON', 'bsc': 'BSC'}
+    sk = short_key.get(chain_name, chain_name.upper())
+    for key in [f'RPC_{sk}', f'RPC_{chain_name.upper()}']:
+        val = os.getenv(key)
+        if val:
+            return val
     info = CHAINS.get(chain_name)
     return info['rpc'] if info else ''
 
