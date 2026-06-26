@@ -82,24 +82,24 @@ def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
         'symbol': '',
         'mintPrice': None,
         'startTime': None,
-        'maxMint': 0,
         'tiers': [],
     }
 
-    # Coba dapetin max mint (per-tx / per-wallet)
-    max_selectors = [
+    # Coba dapetin max mint global (fallback kalo tier gak punya)
+    global_max = 0
+    global_max_selectors = [
         '0xac5ba77b',  # maxMintAmount
         '0x3a84b649',  # maxMintPerTx
         '0xc3c5a547',  # maxPerMint
         '0x1f2dcdb7',  # maxPerWallet
     ]
-    for sel in max_selectors:
+    for sel in global_max_selectors:
         try:
             resp = w3.eth.call({'to': contract, 'data': sel})
             if resp and resp != '0x' and len(resp) >= 66:
                 val = int(resp, 16)
-                if val > 0 and val < 1000000:  # wajar
-                    result['maxMint'] = val
+                if val > 0 and val < 1000000:
+                    global_max = val
                     break
         except:
             pass
@@ -191,12 +191,39 @@ def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
         elif tier_name == 'Public':
             status = 'active'
 
+        # Cek max mint per tier
+        tier_max = 0
+        tier_max_sels = []
+        if tier_name == 'Public':
+            tier_max_sels = ['0x64e604ba', '0x77141fb6', '0xce40e4c8']
+        elif tier_name == 'Allowlist':
+            tier_max_sels = ['0x2a38dee1', '0x84568828', '0x3013ce4b']
+        elif tier_name == 'FCFS':
+            tier_max_sels = ['0x2e2f4cc2']
+        elif tier_name == 'GTD':
+            tier_max_sels = ['0x0b6b5b5b']
+        elif tier_name == 'Team':
+            tier_max_sels = ['0x8f0f73a8']
+        for sel in tier_max_sels:
+            try:
+                resp = w3.eth.call({'to': contract, 'data': sel})
+                if resp and resp != '0x' and len(resp) >= 66:
+                    val = int(resp, 16)
+                    if val > 0 and val < 1000000:
+                        tier_max = val
+                        break
+            except:
+                pass
+        if not tier_max:
+            tier_max = global_max
+
         detected.append({
             'name': tier_name,
             'price': tier_price,
             'startTime': tier_start,
             'status': status,
             'methodSig': tier_sig,
+            'maxMint': tier_max,
         })
 
     # Fallback: mintPrice global

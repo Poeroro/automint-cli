@@ -215,7 +215,7 @@ def main():
             sys.exit(1)
 
     # ── Step 4.5: Quantity ──
-    max_mint = result.get('maxMint', 0)
+    max_mint = selected.get('maxMint', 0)
     quantity = 1
     if max_mint > 1:
         console.print(f'\n[bold]Quantity:[/bold] Max mint per tx = [cyan]{max_mint}[/cyan]')

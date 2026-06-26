@@ -37,9 +37,6 @@ def show_detect_result(data: dict):
     console.print(f'\n[bold]Collection:[/bold] {name}')
     console.print(f'[bold]Contract:[/bold]  [cyan]{contract}[/cyan]')
     console.print(f'[bold]Chain:[/bold]     {chain} (ID: {chain_id})')
-    max_mint = data.get('maxMint', 0)
-    if max_mint:
-        console.print(f'[bold]Max Mint:[/bold]  [cyan]{max_mint}[/cyan] per tx')
     console.print()
 
     tiers = data.get('tiers', [])
@@ -51,6 +48,7 @@ def show_detect_result(data: dict):
     table.add_column('#', style='dim')
     table.add_column('Tier')
     table.add_column('Price', justify='right')
+    table.add_column('Max', justify='right')
     table.add_column('Status')
     table.add_column('Starts In')
 
@@ -58,6 +56,8 @@ def show_detect_result(data: dict):
 
     for i, t in enumerate(tiers, 1):
         price = f'{t["price"]} {currency}' if t['price'] > 0 else '[green]FREE[/green]'
+        max_mint = t.get('maxMint', 0)
+        max_str = str(max_mint) if max_mint else '[dim]—[/dim]'
         status_raw = t.get('status', '?')
 
         if status_raw == 'active':
@@ -77,7 +77,7 @@ def show_detect_result(data: dict):
             status = status_raw
             starts_in = '[dim]—[/dim]'
 
-        table.add_row(str(i), t.get('name', '?'), price, status, starts_in)
+        table.add_row(str(i), t.get('name', '?'), price, max_str, status, starts_in)
 
     console.print(table)
 
@@ -91,18 +91,21 @@ def show_eligibility(tiers: list, wallet: str, balance: float, currency: str = '
     table.add_column('#', style='dim')
     table.add_column('Tier')
     table.add_column('Price', justify='right')
+    table.add_column('Max', justify='right')
     table.add_column('Eligible')
     table.add_column('Reason')
 
     for i, t in enumerate(tiers, 1):
         price = f'{t["price"]} {currency}' if t['price'] > 0 else '[green]FREE[/green]'
+        max_mint = t.get('maxMint', 0)
+        max_str = str(max_mint) if max_mint else '[dim]—[/dim]'
         if t['eligible']:
             elig = '[green]✅ YES[/green]'
         else:
             elig = '[red]❌ NO[/red]'
         reason = t.get('reasons', ['—'])[0] if t.get('reasons') else '—'
 
-        table.add_row(str(i), t['name'], price, elig, reason)
+        table.add_row(str(i), t['name'], price, max_str, elig, reason)
 
     console.print(table)
 
