@@ -10,7 +10,7 @@ Usage:
 Flow: input → detect → eligibility → pilih tier → countdown → execute → report
 """
 
-import sys, os, time, argparse, json, stat
+import sys, os, time, argparse, json
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -30,9 +30,16 @@ LOG_FILE = 'automint.log'
 
 
 def check_env_file():
-    """Cek permission .env — harus 600."""
+    """Cek .env exist + permission 600."""
     env_path = '.env'
     if not os.path.exists(env_path):
+        console.print('[yellow]⚠ .env file not found![/yellow]')
+        console.print('  Copy [cyan].env.example[/cyan] ke [cyan].env[/cyan] dan isi:')
+        console.print('  [yellow]cp .env.example .env[/yellow]')
+        console.print('  [yellow]nano .env[/yellow]')
+        console.print()
+        if input('Continue without .env? (hanya contract langsung tanpa OS API) [y/N] > ').strip().lower() != 'y':
+            sys.exit(1)
         return
     mode = os.stat(env_path).st_mode & 0o777
     if mode > 0o600:
@@ -84,8 +91,7 @@ Contoh:
     p.add_argument('--chain', default='', help='Chain: eth/base/op/arb/polygon/bsc')
     p.add_argument('--rpc', default='', help='Custom RPC URL (override env/default)')
     p.add_argument('--dry-run', action='store_true', help='Detect + estimate only, no mint')
-    args, _ = p.parse_known_args()
-    return args
+    return p.parse_args()
 
 
 def prompt_input(args):
@@ -211,7 +217,7 @@ def main():
     # ── Step 5: Cost Estimate ──
     console.print('\n[bold]💰 Estimating cost...[/bold]')
     est = estimate_total_cost(contract, chain, wallet, selected, custom_rpc)
-    show_cost_estimate(est)
+    show_cost_estimate(est, currency)
 
     if est.get('error'):
         sys.exit(1)
@@ -283,5 +289,5 @@ if __name__ == '__main__':
     try:
         main()
     except KeyboardInterrupt:
-        print('\n\n[dim]Interrupted by user. Exiting.[/dim]')
+        console.print('\n\n[dim]Interrupted by user. Exiting.[/dim]')
         sys.exit(0)

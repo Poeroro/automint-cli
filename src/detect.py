@@ -200,12 +200,13 @@ def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
 
 
 def auto_detect_chain(contract: str) -> str | None:
-    """Coba semua chain RPC, balik chain pertama yg contract-nya ada code."""
+    """Coba semua chain RPC, timeout 3s per chain."""
     for name, info in CHAINS.items():
         rpc = info['rpc']
         try:
-            w3 = Web3(Web3.HTTPProvider(rpc))
-            code = w3.eth.get_code(Web3.to_checksum_address(contract))
+            w3 = Web3(Web3.HTTPProvider(rpc, request_kwargs={'timeout': 3}))
+            addr = Web3.to_checksum_address(contract)
+            code = w3.eth.get_code(addr)
             if code and code != '0x' and len(code) > 2:
                 return name
         except:

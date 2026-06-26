@@ -44,6 +44,7 @@ def get_rpc(chain_name: str) -> str:
     return info['rpc'] if info else ''
 
 def get_opensea_api_key() -> str:
+    """Ambil OS API key dari env. Wajib diisi."""
     return os.getenv('OPENSEA_API_KEY', '')
 
 def get_private_key() -> str:

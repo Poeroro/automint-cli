@@ -1,0 +1,1 @@
+# AutoMint CLI — src package

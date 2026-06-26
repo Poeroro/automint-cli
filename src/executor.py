@@ -30,17 +30,22 @@ def wait_for_countdown(target_ts: int, tier_name: str):
             remaining = target_ts - int(time.time())
             if remaining <= 0:
                 break
-            bar = '█' * max(0, min(20, int((target_ts - int(time.time())) / target_ts * 20)) if target_ts > int(time.time()) else 0)
-            sys.stdout.write(f'\r   ⏱  {_fmt_duration(remaining)}  ')
+            total_dur = target_ts - int(time.time()) + remaining  # approximate total
+            pct = max(0, min(20, int((target_ts - int(time.time())) / max(target_ts, 1) * 20))) if target_ts > int(time.time()) else 0
+            bar = '█' * pct + '░' * (20 - pct)
+            sys.stdout.write(f'\r   ⏱  {_fmt_duration(remaining)}  [{bar}]')
             sys.stdout.flush()
             time.sleep(1)
     except KeyboardInterrupt:
         print('\n   ✕ Cancelled by user')
         return False
+    print()  # newline after countdown ends
     return True
 
 
 def _fmt_duration(secs: int) -> str:
+    if secs < 0:
+        secs = 0
     h = secs // 3600
     m = (secs % 3600) // 60
     s = secs % 60
@@ -95,8 +100,8 @@ def execute_mint(contract: str, chain: str, tier: dict, custom_rpc: str = '') ->
         max_fee = w3.eth.gas_price
         max_priority = 1000000000
 
-    # Nonce
-    nonce = w3.eth.get_transaction_count(wallet)
+    # Nonce — pake 'pending' biar gak tabrakan kalo ada tx lain
+    nonce = w3.eth.get_transaction_count(wallet, 'pending')
 
     tx = {
         'to': contract,
