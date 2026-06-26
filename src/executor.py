@@ -1,0 +1,136 @@
+"""Build tx, sign, countdown, execute, wait receipt."""
+
+import time, sys
+from web3 import Web3, Account
+from web3.middleware import construct_sign_and_send_raw_middleware
+
+from .config import get_rpc, get_private_key
+
+def get_wallet(w3: Web3) -> tuple:
+    """Load wallet dari private key env, inject middleware."""
+    pk = get_private_key()
+    if not pk or pk == '0x' + '0' * 64:
+        return None, 'PRIVATE_KEY not set in .env'
+    try:
+        acct = Account.from_key(pk)
+        w3.middleware_onion.add(construct_sign_and_send_raw_middleware(acct))
+        return acct, None
+    except Exception as e:
+        return None, f'Invalid private key: {str(e)[:40]}'
+
+
+def wait_for_countdown(target_ts: int, tier_name: str):
+    """Loop countdown sampai 0, return False kalo user cancel."""
+    remaining = target_ts - int(time.time())
+    if remaining <= 0:
+        return True
+
+    print(f'\n⏳ {tier_name} opens in {_fmt_duration(remaining)}')
+    print('   [Press Ctrl+C to cancel]')
+    try:
+        while remaining > 0:
+            remaining = target_ts - int(time.time())
+            if remaining <= 0:
+                break
+            bar = '█' * max(0, min(20, int((target_ts - int(time.time())) / target_ts * 20)) if target_ts > int(time.time()) else 0)
+            sys.stdout.write(f'\r   ⏱  {_fmt_duration(remaining)}  ')
+            sys.stdout.flush()
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print('\n   ✕ Cancelled by user')
+        return False
+    return True
+
+
+def _fmt_duration(secs: int) -> str:
+    h = secs // 3600
+    m = (secs % 3600) // 60
+    s = secs % 60
+    return f'{h:02d}:{m:02d}:{s:02d}'
+
+
+def execute_mint(contract: str, chain: str, tier: dict, custom_rpc: str = '') -> dict:
+    """Build tx, sign, send, wait receipt. Return report."""
+    rpc = custom_rpc or get_rpc(chain)
+    w3 = Web3(Web3.HTTPProvider(rpc))
+    if not w3.is_connected():
+        return {'status': 'error', 'message': 'RPC not connected'}
+
+    acct, err = get_wallet(w3)
+    if err:
+        return {'status': 'error', 'message': err}
+
+    wallet = acct.address
+
+    # Build calldata
+    method_sig = tier.get('methodSig', '0x1249c58b')
+    price_wei = int(tier.get('price', 0) * 1e18)
+
+    # Simple mint(uint256) calldata
+    calldata = method_sig + '0' * 63 + '1'
+
+    # Cek balance dulu
+    balance_wei = w3.eth.get_balance(wallet)
+    if balance_wei < price_wei:
+        return {'status': 'error', 'message': f'Insufficient balance: {balance_wei/1e18:.6f} < {price_wei/1e18} ETH'}
+
+    # Gas
+    try:
+        gas_estimate = w3.eth.estimate_gas({
+            'from': wallet, 'to': contract, 'data': calldata, 'value': hex(price_wei)
+        })
+    except Exception as e:
+        return {'status': 'error', 'message': f'estimate gas: {str(e)[:80]}'}
+
+    try:
+        fee_history = w3.eth.fee_history(1, 'latest', [25])
+        base_fee = fee_history['baseFeePerGas'][-1]
+        max_priority = fee_history['reward'][-1][0] if fee_history['reward'] else 1000000000
+        max_fee = base_fee + max_priority
+    except:
+        max_fee = w3.eth.gas_price
+        max_priority = 1000000000
+
+    # Nonce
+    nonce = w3.eth.get_transaction_count(wallet)
+
+    tx = {
+        'to': contract,
+        'data': calldata,
+        'value': price_wei,
+        'gas': gas_estimate,
+        'maxFeePerGas': max_fee,
+        'maxPriorityFeePerGas': max_priority,
+        'nonce': nonce,
+        'chainId': w3.eth.chain_id,
+    }
+
+    # Sign + send
+    try:
+        signed = acct.sign_transaction(tx)
+        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+        print(f'\n   📤 Tx sent: {tx_hash.hex()[:18]}...{tx_hash.hex()[-6:]}')
+    except Exception as e:
+        return {'status': 'error', 'message': f'send tx: {str(e)[:80]}'}
+
+    # Wait receipt
+    try:
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120, poll_latency=2)
+    except Exception as e:
+        return {'status': 'pending', 'tx_hash': tx_hash.hex(), 'message': f'Waiting receipt timeout: {str(e)[:60]}'}
+
+    if receipt['status'] == 1:
+        gas_used = receipt['gasUsed']
+        gas_price = receipt.get('effectiveGasPrice', max_fee)
+        gas_cost = gas_used * gas_price / 1e18
+        return {
+            'status': 'success',
+            'tx_hash': receipt['transactionHash'].hex(),
+            'block': receipt['blockNumber'],
+            'gas_used': gas_used,
+            'gas_price_gwei': gas_price / 1e9,
+            'gas_cost_eth': gas_cost,
+            'total_cost_eth': price_wei / 1e18 + gas_cost,
+        }
+    else:
+        return {'status': 'failed', 'tx_hash': receipt['transactionHash'].hex(), 'message': 'Transaction reverted'}
