@@ -54,13 +54,17 @@ git clone https://github.com/Poeroro/automint-cli.git
 cd automint-cli
 
 # Buat virtual environment
-python3 -m venv venv
+# Windows: python -m venv venv
+# Linux/Mac: python3 -m venv venv
+python -m venv venv
 
 # Aktifkan
-source venv/bin/activate
+# Windows: venv\Scripts\activate
+# Linux/Mac: source venv/bin/activate
+venv\Scripts\activate
 
 # Install semua dependency
-python3 -m pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
 ## Setup `.env`
@@ -103,10 +107,10 @@ chmod 600 .env
 Supaya tinggal ketik `automint` dari mana aja:
 
 ```bash
-# Buat wrapper bash — langsung deteksi venv di folder project
+# ─── Linux/Mac ───
 sudo tee /usr/local/bin/automint > /dev/null << 'SCRIPT'
 #!/bin/bash
-cd "$(dirname "$0")" 2>/dev/null || cd /path/ke/automint-cli
+cd /path/ke/automint-cli
 if [ -f "venv/bin/python3" ]; then
     exec venv/bin/python3 automint.py "$@"
 elif [ -f ".venv/bin/python3" ]; then
@@ -116,9 +120,14 @@ else
 fi
 SCRIPT
 sudo chmod +x /usr/local/bin/automint
-
 # Ganti /path/ke/automint-cli dengan directory project kamu
-# Contoh: /home/user/automint-cli
+
+# ─── Windows (PowerShell) ───
+# Bikin automint.cmd di folder project:
+#   @echo off
+#   python venv\Scripts\python.exe automint.py %*
+# Lalu tambah folder project ke PATH, atau jalankan pake:
+#   venv\Scripts\python automint.py [args]
 ```
 
 Selesai. Sekarang tinggal `automint` enter.
