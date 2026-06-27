@@ -494,8 +494,13 @@ Kalo RPC utama down, CLI otomatis coba fallback ke endpoint publik lain (Ankr, L
 
 ## Troubleshooting
 
-### "OPENSEA_API_KEY not set"
-Gak dipake lagi. Auto-mint skrg scrape OpenSea page langsung, gak butuh API key. Hapus aja baris `OPENSEA_API_KEY` dari `.env`.
+### "API HTTP 401" atau "API HTTP 429"
+OpenSea rate limit kena (16 req/window tanpa API key). CLI otomatis retry 3x dengan backoff.
+
+Kalo masih gagal, daftar API key gratis di https://docs.opensea.io/reference/api-keys lalu isi di `.env`:
+```env
+OPENSEA_API_KEY=your_key_here
+```
 
 ### ".env permission too open"
 **Linux/Mac:** Jalanin `chmod 600 .env`. Ketik `y` kalo mau lanjut (gak disarankan).

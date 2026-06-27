@@ -113,15 +113,51 @@ def build_calldata(method_sig: str, quantity: int, merkle_proof: list | None = N
     return method_sig + qty_hex
 
 
+_OS_HEADERS = {
+    'User-Agent': (
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+        'AppleWebKit/537.36 (KHTML, like Gecko) '
+        'Chrome/120.0.0.0 Safari/537.36'
+    ),
+    'Accept': 'application/json',
+    'Accept-Language': 'en-US,en;q=0.9',
+}
+
+
 def scrape_opensea_collection(slug: str) -> dict:
-    """Get collection info from OpenSea API v2."""
+    """Get collection info from OpenSea API v2.
+
+    Supports optional OPENSEA_API_KEY env var.
+    Retries on 429/401 with backoff (rate limit or temporary block).
+    """
+    import os as _os
     url = f'https://api.opensea.io/api/v2/collections/{slug}'
-    try:
-        resp = requests.get(url, timeout=15, headers={'User-Agent': 'Mozilla/5.0'})
-    except requests.RequestException as e:
-        return {'error': f'Failed to fetch: {str(e)[:60]}'}
-    if resp.status_code != 200:
-        return {'error': f'API HTTP {resp.status_code}'}
+    headers = dict(_OS_HEADERS)
+    api_key = _os.getenv('OPENSEA_API_KEY', '').strip()
+    if api_key:
+        headers['x-api-key'] = api_key
+
+    last_status = None
+    for attempt in range(3):
+        try:
+            resp = requests.get(url, timeout=15, headers=headers)
+            last_status = resp.status_code
+            if resp.status_code == 200:
+                break
+            if resp.status_code in (401, 429):
+                # Rate limited or IP blocked — wait and retry
+                retry_after = int(resp.headers.get('retry-after', 5 * (attempt + 1)))
+                time.sleep(min(retry_after, 15))
+                continue
+            # Other error — no point retrying
+            return {'error': f'API HTTP {resp.status_code}'}
+        except requests.RequestException as e:
+            return {'error': f'Failed to fetch: {str(e)[:60]}'}
+    else:
+        if last_status in (401, 429):
+            hint = ' (set OPENSEA_API_KEY in .env to avoid rate limits)' if not api_key else ''
+            return {'error': f'API HTTP {last_status} after retries{hint}'}
+        return {'error': f'API HTTP {last_status}'}
 
     try:
         data = resp.json()
