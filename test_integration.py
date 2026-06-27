@@ -41,16 +41,22 @@ else:
 
 # check_env_file: no .env → exit
 if os.path.exists('.env'):
+    saved_pk = os.environ.pop('PRIVATE_KEY', None)
+    saved_pks = os.environ.pop('PRIVATE_KEYS', None)
     os.rename('.env', '.env.bak')
     try:
         automint.check_env_file()
-        check("check_env_file(no .env): should exit", False)
+        check("check_env_file(no .env, no env var): should exit", False)
     except SystemExit:
-        check("check_env_file(no .env): exits correctly", True)
+        check("check_env_file(no .env, no env var): exits correctly", True)
     except Exception as e:
-        check("check_env_file(no .env): exit not exception", False, str(e))
+        check("check_env_file(no .env, no env var): exit not exception", False, str(e))
     finally:
         os.rename('.env.bak', '.env')
+        if saved_pk is not None:
+            os.environ['PRIVATE_KEY'] = saved_pk
+        if saved_pks is not None:
+            os.environ['PRIVATE_KEYS'] = saved_pks
 
 # ── append_log ──
 entry = {

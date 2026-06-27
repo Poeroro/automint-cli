@@ -245,9 +245,31 @@ def _resolve_start_time(w3: Web3, contract: str, tier_name: str) -> int | None:
     return None
 
 
+def _scan_bytecode(bytecode_hex: str, selectors: list[str]) -> set[str]:
+    """Return which 4-byte selectors are present in contract bytecode.
+
+    Checks for the bare 8-char hex selector as a substring of the bytecode —
+    this is how the Solidity dispatcher table works: each selector appears as
+    a literal 4-byte value that the dispatcher compares against msg.sig.
+    Unlike eth_call, this never reverts and works on paused/sold-out contracts.
+    Input selectors may include or omit the '0x' prefix.
+    """
+    # Normalise bytecode: strip 0x prefix, lowercase
+    code = bytecode_hex.lstrip('0x').lower()
+    found = set()
+    for sel in selectors:
+        bare = sel.lstrip('0x').lower()
+        if bare in code:
+            found.add(sel)
+    return found
+
+
 def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
-    """Pure on-chain detection: name, symbol, tiers, chainId."""
-    # Checksum before cache lookup so cache keys are consistent
+    """Pure on-chain detection: name, symbol, tiers, chainId.
+
+    Tier detection uses bytecode scanning (not eth_call) so it works even
+    when the contract is paused, sold-out, or requires payment/whitelist.
+    """
     try:
         contract = Web3.to_checksum_address(contract)
     except Exception:
@@ -263,22 +285,20 @@ def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
         return {'error': str(e)}
 
     w3 = Web3(Web3.HTTPProvider(rpc))
-
     chain_id = w3.eth.chain_id
 
-    all_selectors: dict[str, str] = {
+    # ── Fetch bytecode (for tier detection) and run eth_calls in parallel ──
+    view_selectors: dict[str, str] = {
         'name':   '0x06fdde03',
         'symbol': '0x95d89b41',
     }
     for sel in GLOBAL_MAX_SELECTORS:
-        all_selectors[f'gm:{sel}'] = sel
-    for tn, sels in TIER_METHODS:
-        for sel in sels:
-            all_selectors[f'tp:{tn}:{sel}'] = sel
+        view_selectors[f'gm:{sel}'] = sel
     for sel in PRICE_SELECTORS:
-        all_selectors[f'pr:{sel}'] = sel
+        view_selectors[f'pr:{sel}'] = sel
 
     raw: dict[str, str | None] = {}
+    bytecode_hex = ''
 
     def _to_hex(resp) -> str:
         if resp is None:
@@ -287,14 +307,25 @@ def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
             return '0x' + resp.hex()
         return str(resp)
 
-    with ThreadPoolExecutor(max_workers=12) as pool:
-        def _call(key: str, data: str):
-            try:
-                return key, _to_hex(w3.eth.call({'to': contract, 'data': data}))
-            except Exception:
-                return key, None
+    def _call(key: str, data: str):
+        try:
+            return key, _to_hex(w3.eth.call({'to': contract, 'data': data}))
+        except Exception:
+            return key, None
 
-        futs = {pool.submit(_call, k, s): k for k, s in all_selectors.items()}
+    def _get_code():
+        try:
+            code = w3.eth.get_code(contract)
+            return code.hex() if isinstance(code, (bytes, bytearray)) else str(code)[2:]
+        except Exception:
+            return ''
+
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        code_fut = pool.submit(_get_code)
+        futs = {pool.submit(_call, k, s): k for k, s in view_selectors.items()}
+
+        bytecode_hex = code_fut.result()
+
         for f in as_completed(futs):
             try:
                 k, v = f.result()
@@ -336,26 +367,17 @@ def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
     if s_raw:
         result['symbol'] = _decode_abi_string(s_raw)
 
+    # ── Tier detection via bytecode scan ──
+    # Collect all tier selectors and check which exist in bytecode
+    all_tier_sels = [sel for _, sels in TIER_METHODS for sel in sels]
+    present_sels = _scan_bytecode(bytecode_hex, all_tier_sels)
+
     now = int(time.time())
     detected = []
 
     for tn, sels in TIER_METHODS:
-        found_sig = None
-        for sel in sels:
-            resp = raw.get(f'tp:{tn}:{sel}')
-            if not resp or resp in ('0x', '0x0', None):
-                continue
-            stripped = resp[2:] if resp.startswith('0x') else resp
-            if len(stripped) >= 64:
-                val = _hex_to_int(resp)
-                if val is not None and val > 0:
-                    found_sig = sel
-                    break
-            elif len(stripped) in (1, 2):
-                if _hex_to_int(resp) == 1:
-                    found_sig = sel
-                    break
-
+        # Pick first selector of this tier that exists in bytecode
+        found_sig = next((sel for sel in sels if sel in present_sels), None)
         if not found_sig:
             continue
 
