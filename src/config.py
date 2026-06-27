@@ -1,6 +1,7 @@
 """Chain config, env loader — RPC multichain dari .env."""
 
-import os, time
+import os
+import time
 
 
 def rpc_retry(fn, max_attempts=3, delay=2):
@@ -48,6 +49,8 @@ def get_rpc(chain_name: str) -> str:
 
 def get_private_key() -> str:
     pk = os.getenv('PRIVATE_KEY', '')
+    if not pk:
+        return ''
     if not pk.startswith('0x'):
         pk = '0x' + pk
     return pk
@@ -71,7 +74,7 @@ def get_all_wallets() -> list:
         try:
             acct = Account.from_key(pk)
             wallets.append({'account': acct, 'address': acct.address, 'private_key': pk})
-        except:
+        except Exception:
             continue
     return wallets
 

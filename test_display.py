@@ -1,9 +1,11 @@
 """Unit tests: display.py"""
-import sys, os
+# ruff: noqa: E402
+import sys
+import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-from src.display import show_banner, show_detect_result, show_eligibility, show_cost_estimate, show_report, console
+from src.display import show_banner, show_detect_result, show_eligibility, show_cost_estimate, show_report
 from io import StringIO
 from rich.console import Console
 

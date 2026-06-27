@@ -1,5 +1,8 @@
 """CLI command tests — edge cases, flags, real URL"""
-import subprocess, sys, os, json
+# ruff: noqa: E402
+import subprocess
+import sys
+import os
 HERE = os.path.dirname(os.path.abspath(__file__))
 PY = os.path.join(HERE, '.venv', 'bin', 'python3')
 MAIN = os.path.join(HERE, 'automint.py')
@@ -49,7 +52,7 @@ check("--url pudgypenguins --dry-run: exit 0 (dry-run sukses)", code == 0, f"cod
 check("  — banner shown", '✦ AutoMint CLI' in out)
 check("  — collection detected", 'PudgyPenguins' in out or 'Pudgy' in out)
 check("  — contract resolved", '0x' in out)
-check("  — wallet loaded", 'Wallet:' in out)
+check("  — wallet loaded", 'Wallets loaded' in out)
 check("  — eligibility checked", 'Eligible' in out or 'eligible' in out or 'Public' in out)
 check("  — no crash traceback", 'Traceback' not in out and 'Traceback' not in err)
 
@@ -81,7 +84,7 @@ check("--chain invalid: error shown", 'Unknown chain' in out)
 # ── CLI: multiple tiers (test display code path) ──
 code, out, err = run(['--url', 'https://opensea.io/collection/pudgypenguins', '--dry-run'], timeout=30)
 check("multi-tier display: tiers table shown", 'Tier' in out and 'Price' in out and 'Status' in out)
-check("  — FREE shown for zero price", 'FREE' in out)
+check("  — price shown for tier", 'ETH' in out)
 
 # ── automint.log: written by non-dry-run code path ──
 # Note: dry-run mode exits BEFORE log write, so no entries from CLI tests

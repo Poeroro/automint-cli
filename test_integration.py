@@ -1,5 +1,9 @@
 """Integration tests: CLI entry points"""
-import sys, os, time, json
+# ruff: noqa: E402
+import sys
+import os
+import time
+import json
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
@@ -88,7 +92,7 @@ try:
         try:
             parsed = json.loads(content.split('\n')[-1])
             check("append_log: valid JSON", all(k in parsed for k in ['timestamp', 'chain', 'contract', 'tier', 'status']))
-        except:
+        except Exception:
             check("append_log: valid JSON", False, "not valid JSON")
     else:
         check("append_log: file exists", False)

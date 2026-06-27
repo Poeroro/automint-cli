@@ -116,7 +116,7 @@ def show_cost_estimate(est: dict, currency: str = 'ETH'):
         console.print(f'[red]✕ Estimate: {est["error"]}[/red]')
         return
 
-    console.print(f'\n[bold]Cost Estimate:[/bold]')
+    console.print('\n[bold]Cost Estimate:[/bold]')
     console.print(f'  Mint Price:  [cyan]{est["price_eth"]:.6f} {currency}[/cyan]')
     console.print(f'  Gas Units:   {est["gas_units"]:,}')
     console.print(f'  Gas Price:   {est["gas_price_gwei"]:.2f} Gwei')
@@ -162,7 +162,7 @@ def show_gas_menu(w3, chain='ethereum'):
     try:
         w3.eth.max_priority_fee
         is_eip1559 = True
-    except:
+    except Exception:
         pass
 
     if is_eip1559:
@@ -176,11 +176,11 @@ def show_gas_menu(w3, chain='ethereum'):
                 hi = max(int(rw[-1][2]), 10_000_000_000)
             else:
                 lo, md, hi = 1_000_000_000, 3_000_000_000, 10_000_000_000
-        except:
+        except Exception:
             lo, md, hi = 1_000_000_000, 3_000_000_000, 10_000_000_000
             try:
                 base = int(w3.eth.gas_price * 0.7)
-            except:
+            except Exception:
                 base = lo * 10
 
         opts = [
@@ -212,7 +212,7 @@ def show_gas_menu(w3, chain='ethereum'):
                 mi = input(f'Max fee (Gwei) [{(base + md)/1e9:.1f}] > ').strip()
                 pf = int(float(pi) * 1e9) if pi else md
                 mf = int(float(mi) * 1e9) if mi else (base + md)
-            except:
+            except Exception:
                 pf, mf = md, base + md
         elif 0 <= ch < len(opts):
             _, pf, _ = opts[ch]
@@ -225,7 +225,7 @@ def show_gas_menu(w3, chain='ethereum'):
     # Legacy
     try:
         gp = w3.eth.gas_price
-    except:
+    except Exception:
         gp = 10_000_000_000
     opts = [
         ('🐢 Low', int(gp * 0.9), f'~{bt * 5}s'),
@@ -246,14 +246,14 @@ def show_gas_menu(w3, chain='ethereum'):
 
     try:
         ch = int((input('\nSelect gas [0-3, default=1] > ').strip() or '1'))
-    except:
+    except (ValueError, EOFError, KeyboardInterrupt):
         ch = 1
 
     if ch == 3:
         try:
             gi = input(f'Gas price (Gwei) [{gp/1e9:.1f}] > ').strip()
             gp_out = int(float(gi) * 1e9) if gi else gp
-        except:
+        except (ValueError, EOFError):
             gp_out = gp
     elif 0 <= ch < len(opts):
         _, gp_out, _ = opts[ch]

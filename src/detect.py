@@ -1,228 +1,221 @@
-"""Detect contract + tiers from OpenSea URL or contract address.
+"""Detect NFT collection info on-chain + scraped from OpenSea page.
 
-Parallel eth_call + cache contract results.
+detect() = main entry: URL → scrape + on-chain detect.
+detect_onchain() = pure on-chain from contract + chain.
+scrape_opensea_collection() = parse HTML from OS page via regex.
 """
 
-import re, time, os, json
+import re
+import os
+import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
+
 from web3 import Web3
 
-from .config import get_rpc, CHAINS, CHAIN_MAP
+from .config import get_rpc
 from .config import resolve_chain as _resolve_chain
 
-OS_CHAIN_MAP = {
-    'ethereum': 'ethereum', 'eth': 'ethereum',
-    'base': 'base',
-    'optimism': 'optimism', 'op': 'optimism',
-    'arbitrum': 'arbitrum', 'arb': 'arbitrum',
-    'polygon': 'polygon', 'matic': 'polygon',
-    'bsc': 'bsc', 'binance': 'bsc',
-}
+
+# ─── Tier detection: name + method sigs ───
+# First selector in each set = preferred mint function
+# We detect price separately via dedicated price selectors
+TIER_METHODS = [
+    ('Public',        ['0x1249c58b']),  # mint()
+    ('OG',            ['0xa28c555d', '0x3b1ebc7e', '0x7a1ac6c1', '0xb3e126be']),
+    ('Allowlist',     ['0x3af32abf', '0x5c1f0ecf', '0x415fc4b3', '0x67e0aceb', '0x3cd80455']),
+    ('Whitelist',     ['0x3af32abf', '0x5c1f0ecf', '0x415fc4b3', '0x67e0aceb']),
+    ('Presale',       ['0xc693f915', '0xf2c4bc48', '0x316894db', '0xc6690c0f']),
+    ('VIP',           ['0x6aaf4481', '0x6403727b']),
+    ('Freemint',      ['0xd18e81b3']),
+    ('Early',         ['0x2f9166b8', '0x67e0aceb', '0xaba3c5f7']),
+]
+
+# Dedicated price selectors — these ACTUALLY return mint price
+PRICE_SELECTORS = [
+    '0xe7572239',  # cost()
+    '0xef18e5e1',  # mintPrice()
+    '0x3de39a5c',  # getMintCost()
+]
+
+
+# Global max supply selectors
+GLOBAL_MAX_SELECTORS = [
+    '0xeab04e34',  # totalSupply()
+    '0x18160ddd',  # totalSupply() (ERC20)
+    '0xcb5e698c',  # MAX_SUPPLY()
+]
+
 
 CACHE_DIR = '.cache'
+os.makedirs(CACHE_DIR, exist_ok=True)
 
 
-def _cache_path(chain: str, contract: str) -> str:
-    """Path for cached detect result."""
-    return os.path.join(CACHE_DIR, f'{chain}_{contract.lower()}.json')
+def _cache_path(chain, contract):
+    return os.path.join(CACHE_DIR, f'{chain}_{contract}.json')
 
 
-def _load_cache(chain: str, contract: str) -> dict | None:
-    """Load cached detect result. Return None if miss/expired/stale."""
+def _read_cache(chain, contract):
     path = _cache_path(chain, contract)
     try:
-        with open(path) as f:
-            data = json.load(f)
-        return data
-    except (FileNotFoundError, json.JSONDecodeError):
-        return None
+        if os.path.exists(path):
+            with open(path) as f:
+                return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        pass
+    return None
 
 
-def _save_cache(chain: str, contract: str, data: dict):
-    """Save detect result to cache."""
+def _write_cache(chain, contract, data):
     try:
-        os.makedirs(CACHE_DIR, exist_ok=True)
-        path = _cache_path(chain, contract)
-        with open(path, 'w') as f:
-            json.dump(data, f, indent=2, default=str)
+        with open(_cache_path(chain, contract), 'w') as f:
+            json.dump(data, f)
     except OSError:
-        pass  # cache failure non-fatal
+        pass
+
+
+
+
 
 
 def scrape_opensea_collection(slug: str) -> dict:
-    """Scrape OpenSea page HTML for contract address + chain (~1-3s)."""
-    result = {'contract': '', 'chain': 'ethereum', 'name': slug}
+    """Get collection info from OpenSea API v2 — no API key needed."""
+    url = f'https://api.opensea.io/api/v2/collections/{slug}'
     try:
-        resp = requests.get(
-            f'https://opensea.io/collection/{slug}',
-            headers={'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'},
-            timeout=10
-        )
-        if not resp.ok:
-            result['error'] = f'HTTP {resp.status_code} fetching collection page'
-            return result
-
-        html = resp.text
-
-        # Priority 1: chain → contractAddress (newer OS format)
-        # Priority 2: chain → address (skip 0x0...0)
-        # Priority 3: slug → address → chain (fallback)
-
-        contract = ''
-        raw_chain = 'ethereum'
-        found = False
-
-        # 1: chain object near contractAddress
-        m = re.search(
-            r'"chain"\s*:\s*\{[^}]*?"identifier"\s*:\s*"([^"]+)"[^}]*?\}'
-            r'[\s\S]{0,300}?"contractAddress"\s*:\s*"(0x[a-fA-F0-9]{40})"',
-            html
-        )
-        if m:
-            raw_chain, addr = m.group(1), m.group(2)
-            if addr != '0x' + '0' * 40:
-                contract, found = addr, True
-
-        # 2: chain object near address (skip zero addr)
-        if not found:
-            m = re.search(
-                r'"chain"\s*:\s*\{[^}]*?"identifier"\s*:\s*"([^"]+)"[^}]*?\}'
-                r'[\s\S]{0,300}?"address"\s*:\s*"(0x[a-fA-F0-9]{40})"',
-                html
-            )
-            if m:
-                raw_chain, addr = m.group(1), m.group(2)
-                if addr != '0x' + '0' * 40:
-                    contract, found = addr, True
-
-        # 3: slug-based fallback
-        if not found:
-            m = re.search(
-                r'"slug"\s*:\s*"' + re.escape(slug) + r'"'
-                r'[\s\S]{0,500}?"address"\s*:\s*"(0x[a-fA-F0-9]{40})"',
-                html
-            )
-            if m:
-                addr = m.group(1)
-                if addr != '0x' + '0' * 40:
-                    contract = addr
-                    found = True
-                    ctx = m.group(0)
-                    chain_m = re.search(r'"identifier"\s*:\s*"([^"]+)"', ctx)
-                    if chain_m:
-                        raw_chain = chain_m.group(1)
-
-        if not found or not contract:
-            result['error'] = 'Could not find contract + chain in page'
-            return result
-
-        result['contract'] = Web3.to_checksum_address(contract)
-        result['chain'] = OS_CHAIN_MAP.get(raw_chain.lower(), raw_chain.lower())
-        return result
-
+        resp = requests.get(url, timeout=15, headers={'User-Agent': 'Mozilla/5.0'})
     except requests.RequestException as e:
-        result['error'] = f'Network error: {e}'
-        return result
+        return {'error': f'Failed to fetch: {str(e)[:60]}'}
+    if resp.status_code != 200:
+        return {'error': f'API HTTP {resp.status_code}'}
+
+    try:
+        data = resp.json()
+    except ValueError:
+        return {'error': 'Invalid API response'}
+
+    contracts = data.get('contracts', [])
+    if not contracts:
+        return {'error': 'No contracts found for collection'}
+
+    contract_raw = contracts[0].get('address', '')
+    contract_chain = contracts[0].get('chain', 'ethereum')
+    name = data.get('name', '')
+
+    if not contract_raw:
+        return {'error': 'No contract address in API response'}
+    if not re.match(r'0x[a-fA-F0-9]{40}', contract_raw):
+        return {'error': f'Invalid contract: {contract_raw[:20]}'}
+
+    try:
+        contract = Web3.to_checksum_address(contract_raw)
+    except Exception:
+        return {'error': 'Invalid contract address'}
+
+    # Map chain from API response
+    chain_map = {
+        'ethereum': 'ethereum', 'eth': 'ethereum',
+        'base': 'base',
+        'optimism': 'optimism',
+        'arbitrum': 'arbitrum', 'arb': 'arbitrum',
+        'polygon': 'polygon', 'matic': 'polygon',
+        'bsc': 'bsc', 'bnb': 'bsc',
+        'sepolia': 'ethereum',  # fallback
+    }
+    chain = chain_map.get(contract_chain.lower(), 'ethereum')
+
+    return {'contract': contract, 'chain': chain, 'name': name}
+
+def _decode_abi_string(hex_data) -> str:
+    """Manual ABI string decoder — no w3.codec dependency."""
+    if isinstance(hex_data, (bytes, bytearray)):
+        hex_str = hex_data.hex()
+    elif isinstance(hex_data, str):
+        if hex_data.startswith('0x'):
+            hex_str = hex_data[2:]
+        else:
+            hex_str = hex_data
+    else:
+        return ''
+    if len(hex_str) < 64:
+        return ''
+    offset_bytes = int(hex_str[:64], 16)
+    data_start = offset_bytes * 2
+    if data_start + 64 > len(hex_str):
+        return ''
+    str_len = int(hex_str[data_start:data_start+64], 16)
+    if str_len == 0 or data_start + 64 + str_len * 2 > len(hex_str):
+        return ''
+    raw = hex_str[data_start+64:data_start+64+str_len*2]
+    return bytes.fromhex(raw).decode('utf-8', errors='replace')
 
 
-def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
-    """Detect tier info, prices, timestamps via parallel eth_call (~300ms)."""
-    rpc = custom_rpc or get_rpc(chain)
-    chain_info = CHAINS.get(chain)
-    if not chain_info or not rpc:
-        return {'error': 'unknown chain'}
+def detect_onchain(contract: str, chain: str) -> dict:
+    """Pure on-chain detection: name, symbol, tiers, chainId.
+    Parallel eth_call via ThreadPoolExecutor."""
+    # Cache check
+    cached = _read_cache(chain, contract)
+    if cached:
+        return cached
 
-    w3 = Web3(Web3.HTTPProvider(rpc, request_kwargs={'timeout': 10}))
-    if not w3.is_connected():
-        return {'error': 'RPC not connected'}
+    rpc = get_rpc(chain)
+    if not rpc:
+        return {'error': f'Unknown chain: {chain}'}
 
     try:
         contract = Web3.to_checksum_address(contract)
-    except:
+    except Exception:
         return {'error': 'Invalid contract address'}
 
-    result = {
-        'contract': contract,
-        'chain': chain,
-        'chainId': chain_info['id'],
-        'name': '',
-        'symbol': '',
-        'mintPrice': None,
-        'startTime': None,
-        'tiers': [],
-    }
+    w3 = Web3(Web3.HTTPProvider(rpc))
+    if not w3.is_connected():
+        return {'error': 'RPC not connected'}
 
-    # ── Build all eth_calls ──
-    global_max_selectors = ['0xac5ba77b', '0x3a84b649', '0xc3c5a547', '0x1f2dcdb7']
+    chain_id = w3.eth.chain_id
 
-    TIER_METHODS = [
-        ('Team',     ['0x8f0f73a8', '0x3b2b4b03']),
-        ('GTD',      ['0xb6b5b5b5', '0xcc5c095f']),
-        ('FCFS',     ['0xc2cf717c', '0x0c91f87b']),
-        ('Allowlist',['0x52044153', '0x075a0e8d']),
-        ('Public',   ['0x1249c58b', '0x3808e184']),
-    ]
+    # ── Parallel eth_call ──
+    name_sig = '0x06fdde03'
+    symbol_sig = '0x95d89b41'
+    all_selectors = {}
 
-    price_selectors = {
-        'Public': '0x1249c58b', 'Allowlist': '0x52044153',
-        'FCFS': '0x0c91f87b', 'GTD': '0xb6b5b5b5', 'Team': '0x8f0f73a8',
-    }
-    time_selectors = {
-        'Public': '0xefefefef', 'Allowlist': '0x5c1f0ecf', 'FCFS': '0xc2cf717c',
-    }
+    all_selectors['name'] = name_sig
+    all_selectors['symbol'] = symbol_sig
 
-    tier_max_map = {
-        'Public':    ['0x64e604ba', '0x77141fb6', '0xce40e4c8'],
-        'Allowlist': ['0x2a38dee1', '0x84568828', '0x3013ce4b'],
-        'FCFS':      ['0x2e2f4cc2'],
-        'GTD':       ['0x0b6b5b5b'],
-        'Team':      ['0x8f0f73a8'],
-    }
-
-    # Build flat call list: (key, data)
-    # key format: "category:detail" or "global_max:sel" or "name" etc.
-    calls = []
-    for sel in global_max_selectors:
-        calls.append((f'gm:{sel}', sel, False))
-
-    calls.append(('name', '0x06fdde03', False))
-    calls.append(('symbol', '0x95d89b41', False))
+    for sel in GLOBAL_MAX_SELECTORS:
+        all_selectors[f'gm:{sel}'] = sel
 
     for tn, sels in TIER_METHODS:
-        ps = price_selectors.get(tn)
-        if ps:
-            calls.append((f'{tn}:price', ps, False))
-        ts = time_selectors.get(tn)
-        if ts:
-            calls.append((f'{tn}:time', ts, False))
         for sel in sels:
-            calls.append((f'{tn}:meth:{sel}', sel + '0' * 63 + '1', True))
+            all_selectors[f'tp:{tn}:{sel}'] = sel
 
-        tn_max = tier_max_map.get(tn, [])
-        for sel in tn_max:
-            calls.append((f'{tn}:max:{sel}', sel, False))
-
-    # ── Execute all eth_calls in parallel ──
-    def do_call(args):
-        key, data, _ = args
-        resp = w3.eth.call({'to': contract, 'data': data})
-        return key, resp
+    # Price selectors — separate from tier detection
+    for sel in PRICE_SELECTORS:
+        all_selectors[f'pr:{sel}'] = sel
 
     raw = {}
-    with ThreadPoolExecutor(max_workers=min(len(calls), 25)) as ex:
-        futs = {ex.submit(do_call, c): c[0] for c in calls}
+
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        def _call(key, data):
+            try:
+                resp = w3.eth.call({'to': contract, 'data': data})
+                # Normalize bytes/HexBytes to hex string
+                if isinstance(resp, (bytes, bytearray)):
+                    resp = '0x' + resp.hex()
+                return key, resp
+            except Exception:
+                return key, None
+
+        futs = {pool.submit(_call, k, s): k for k, s in all_selectors.items()}
         for f in as_completed(futs):
             try:
                 k, v = f.result()
                 raw[k] = v
-            except:
+            except Exception:
                 pass
 
     # ── Process results ──
     # Global max
     global_max = 0
-    for sel in global_max_selectors:
+    for sel in GLOBAL_MAX_SELECTORS:
         resp = raw.get(f'gm:{sel}')
         if resp and resp != '0x' and len(resp) >= 66:
             val = int(resp, 16)
@@ -230,151 +223,123 @@ def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
                 global_max = val
                 break
 
-    # Name + symbol
-    n_raw = raw.get('name')
-    if n_raw and len(n_raw) > 2:
-        try:
-            result['name'] = w3.codec.decode(['string'], n_raw)[0]
-        except:
-            pass
-    s_raw = raw.get('symbol')
-    if s_raw and len(s_raw) > 2:
-        try:
-            result['symbol'] = w3.codec.decode(['string'], s_raw)[0]
-        except:
-            pass
+    # Try dedicated price selectors first
+    onchain_price = 0
+    for sel in PRICE_SELECTORS:
+        resp = raw.get(f'pr:{sel}')
+        if resp and resp != '0x' and len(resp) >= 3:
+            try:
+                val = int(resp, 16)
+                # Valid price: 1 wei to 10_000 ETH
+                if 1 <= val <= 10_000_000_000_000_000_000:
+                    onchain_price = val
+                    break
+            except Exception:
+                pass
 
-    now = int(time.time())
+    # Name + symbol
+    result = {'contract': contract, 'chain': chain, 'chainId': chain_id, 'tiers': []}
+    n_raw = raw.get('name')
+    if n_raw:
+        result['name'] = _decode_abi_string(n_raw)
+    s_raw = raw.get('symbol')
+    if s_raw:
+        result['symbol'] = _decode_abi_string(s_raw)
+
     detected = []
 
+    # Tier detection: a selector EXISTS if it returns data (non-empty, non-zero)
+    # but we DON'T use that data as price — it's often totalSupply, maxMint, etc.
     for tn, sels in TIER_METHODS:
-        tier_price = 0
-        tier_start = None
-        tier_sig = ''
-
-        # Price
-        ps = price_selectors.get(tn)
-        if ps:
-            resp = raw.get(f'{tn}:price')
-            if resp and resp != '0x' and len(resp) >= 66:
-                val = int(resp, 16)
-                if val > 0:
-                    tier_price = val / 1e18
-                    tier_sig = ps
-
-        # Start time
-        ts = time_selectors.get(tn)
-        if ts:
-            resp = raw.get(f'{tn}:time')
-            if resp and resp != '0x' and len(resp) >= 66:
-                val = int(resp, 16)
-                if val > 1000000000:
-                    tier_start = val
-                    tier_sig = tier_sig or sels[0]
-
-        # Method existence check
+        found = False
         for sel in sels:
-            k = f'{tn}:meth:{sel}'
-            if k in raw and raw[k] and raw[k] != '0x':
-                tier_sig = sel
+            resp = raw.get(f'tp:{tn}:{sel}')
+            if resp and resp != '0x' and len(resp) >= 66:
+                found = True
                 break
+            elif resp and resp != '0x':
+                # Short response but non-zero — function might return bool
+                val = int(resp, 16)
+                if val > 0 and val < 0x100:
+                    found = True
+                    break
 
-        if not tier_sig and tn != 'Public':
+        if not found:
             continue
 
-        status = 'unknown'
-        if tier_start:
-            if tier_start > now:
-                status = f'scheduled:{tier_start}'
-            else:
-                status = 'active'
-        elif tier_price > 0:
-            status = 'active'
-        elif tn == 'Public':
-            status = 'active'
-
-        # Max mint
-        tier_max = 0
-        tn_mx = tier_max_map.get(tn, [])
-        for sel in tn_mx:
-            resp = raw.get(f'{tn}:max:{sel}')
-            if resp and resp != '0x' and len(resp) >= 66:
-                val = int(resp, 16)
-                if 0 < val < 1000000:
-                    tier_max = val
-                    break
-        if not tier_max:
-            tier_max = global_max
-
-        detected.append({
+        entry = {
             'name': tn,
-            'price': tier_price,
-            'startTime': tier_start,
-            'status': status,
-            'methodSig': tier_sig,
-            'maxMint': tier_max,
+            'price': onchain_price / 1e18,
+            'methodSig': sels[0],
+            'status': 'active',
+            'maxMint': global_max if global_max > 0 else 0,
+        }
+        detected.append(entry)
+
+    # Always add Public mint if not already detected
+    has_public = any(t['name'] == 'Public' for t in detected)
+    if not has_public:
+        mint_sig = TIER_METHODS[0][1][0]  # 0x1249c58b
+        detected.append({
+            'name': 'Public',
+            'price': onchain_price / 1e18,
+            'methodSig': mint_sig,
+            'status': 'active',
+            'maxMint': global_max if global_max > 0 else 0,
         })
 
-    # Fallback
-    if not detected:
-        resp = raw.get('Public:price') or raw.get('gm:0x1249c58b')
-        if resp and resp != '0x' and len(resp) >= 66:
-            val = int(resp, 16)
-            if val > 0:
-                result['mintPrice'] = val / 1e18
-                detected.append({
-                    'name': 'Public', 'price': val / 1e18,
-                    'startTime': None, 'status': 'active',
-                    'methodSig': '0x1249c58b',
-                })
-
     result['tiers'] = detected
+
+    # Save to cache
+    _write_cache(chain, contract, result)
+
     return result
 
 
-def detect(url_or_contract: str, chain_hint: str = '', custom_rpc: str = '') -> dict:
-    """Main detect — URL → scrape → on-chain, or contract → on-chain.
-
-    Checks cache first. Skips detect_onchain if cached result exists.
+def detect(input_str: str, chain_hint: str = '', custom_rpc: str = '') -> dict:
+    """Parse input, detect NFT info.
+    input_str bisa URL OpenSea atau contract address.
+    Kalo contract, chain WAJIB diisi (no more auto-detect multi-chain).
     """
-    # Contract address langsung
-    if re.match(r'^0x[a-fA-F0-9]{40}$', url_or_contract):
-        chain_resolved = _resolve_chain(chain_hint)
-        if not chain_resolved:
-            if chain_hint:
-                return {'error': f'Unknown chain: "{chain_hint}". Use: eth/base/op/arb/polygon/bsc'}
-            return {'error': 'Chain required with contract address. Use --chain eth/base/op/arb/polygon/bsc'}
-        # Check cache
-        cached = _load_cache(chain_resolved, url_or_contract)
-        if cached:
-            cached['_cached'] = True
-            return cached
-        result = detect_onchain(url_or_contract, chain_resolved, custom_rpc)
-        if not result.get('error'):
-            _save_cache(chain_resolved, url_or_contract, result)
-        return result
+    s = input_str.strip()
 
-    # OpenSea URL — scrape not API
-    m = re.search(r'opensea\.io/collection/([^/?#]+)', url_or_contract)
-    if m:
-        slug = m.group(1)
-        resolved = scrape_opensea_collection(slug)
-        if resolved.get('error'):
-            return {'error': resolved['error'], 'name': slug}
-        # Check cache
-        cached = _load_cache(resolved['chain'], resolved['contract'])
-        if cached:
-            cached['_cached'] = True
-            cached['name'] = cached.get('name') or resolved['name']
-            cached['slug'] = slug
-            return cached
-        onchain = detect_onchain(resolved['contract'], resolved['chain'], custom_rpc)
+    # ── OpenSea URL ──
+    if s.startswith('http'):
+        # Parse slug from URL
+        slug_match = re.search(r'opensea\.io/(?:collection/)?([^/?]+)', s)
+        if not slug_match:
+            return {'error': 'Invalid OpenSea URL'}
+        slug = slug_match.group(1)
+
+        # Scrape
+        scraped = scrape_opensea_collection(slug)
+        if scraped.get('error'):
+            return scraped
+        contract = scraped['contract']
+        chain = scraped['chain']
+
+        # On-chain detect
+        onchain = detect_onchain(contract, chain)
         if onchain.get('error'):
             return onchain
-        onchain['name'] = onchain.get('name') or resolved['name']
-        onchain['slug'] = slug
-        if not onchain.get('error'):
-            _save_cache(resolved['chain'], resolved['contract'], onchain)
+        onchain['contract'] = contract
+        onchain['chain'] = chain
+        onchain['name'] = onchain.get('name') or scraped.get('name', '')
         return onchain
 
-    return {'error': 'Invalid input — use OpenSea URL or 0x contract address'}
+    # ── Contract address ──
+    if s.startswith('0x') and len(s) == 42:
+        if not chain_hint:
+            return {'error': 'Chain required. Use --chain eth/base/op/arb/polygon/bsc'}
+        chain = _resolve_chain(chain_hint)
+        if not chain:
+            return {'error': f'Unknown chain: {chain_hint}'}
+        contract = s
+        onchain = detect_onchain(contract, chain)
+        if onchain.get('error'):
+            return onchain
+        onchain['contract'] = contract
+        onchain['chain'] = chain
+        return onchain
+
+    return {'error': 'Invalid input. Provide OpenSea URL or contract address (0x...)'}

@@ -1,5 +1,7 @@
 """Unit tests: eligibility.py + executor.py + display.py"""
-import sys, os
+# ruff: noqa: E402
+import sys
+import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
@@ -41,7 +43,7 @@ check("get_private_key(bad) still returns 0x...", _pk.startswith('0x'))
 _os.environ['PRIVATE_KEY'] = ''
 from src.config import get_private_key as _gpk2
 _pk2 = _gpk2()
-check("get_private_key(empty) starts with 0x", _pk2.startswith('0x'))
+check("get_private_key(empty) returns empty string", _pk2 == '')
 # Restore
 _os.environ['PRIVATE_KEY'] = saved
 

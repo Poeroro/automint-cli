@@ -2,7 +2,7 @@
 
 from web3 import Web3
 
-from .config import get_rpc
+from .config import get_rpc, rpc_retry
 
 def check_eligibility(contract: str, chain: str, wallet: str, tiers: list, custom_rpc: str = '') -> list:
     """Cek eligibility tiap tier buat wallet tertentu."""
@@ -15,7 +15,7 @@ def check_eligibility(contract: str, chain: str, wallet: str, tiers: list, custo
     try:
         contract = Web3.to_checksum_address(contract)
         wallet = Web3.to_checksum_address(wallet)
-    except:
+    except Exception:
         return []
 
     # Balance ETH
@@ -29,7 +29,8 @@ def check_eligibility(contract: str, chain: str, wallet: str, tiers: list, custo
         resp = w3.eth.call({'to': contract, 'data': balance_of_sig})
         if resp and resp != '0x':
             minted = int(resp, 16)
-    except: pass
+    except Exception:
+        pass
 
     results = []
     for tier in tiers:
@@ -58,7 +59,8 @@ def check_eligibility(contract: str, chain: str, wallet: str, tiers: list, custo
                             eligible = True
                             reasons.append('whitelisted')
                             break
-                except: pass
+                except Exception:
+                    pass
 
         # Free tier — simulate mint
         if not eligible and price == 0 and method_sig:
@@ -68,7 +70,8 @@ def check_eligibility(contract: str, chain: str, wallet: str, tiers: list, custo
                 w3.eth.call(tx)
                 eligible = True
                 reasons.append('free mint OK')
-            except: pass
+            except Exception:
+                pass
 
         # Public paid — balance check
         if not eligible and 'public' in name.lower():
@@ -105,7 +108,7 @@ def estimate_total_cost(contract: str, chain: str, wallet: str, tier: dict, cust
     try:
         contract = Web3.to_checksum_address(contract)
         wallet = Web3.to_checksum_address(wallet)
-    except:
+    except Exception:
         return {'error': 'Invalid address'}
 
     price_per_unit = tier.get('price', 0)
@@ -124,12 +127,15 @@ def estimate_total_cost(contract: str, chain: str, wallet: str, tier: dict, cust
         return {'error': f'estimate gas failed: {str(e)[:60]}'}
 
     try:
-        fee_history = w3.eth.fee_history(1, 'latest', [25])
+        fee_history = rpc_retry(lambda: w3.eth.fee_history(1, 'latest', [25]))
         base_fee = fee_history['baseFeePerGas'][-1]
         max_priority = fee_history['reward'][-1][0] if fee_history['reward'] else 1000000000
         max_fee = base_fee + max_priority
-    except:
-        max_fee = w3.eth.gas_price
+    except Exception:
+        try:
+            max_fee = w3.eth.gas_price
+        except Exception:
+            max_fee = 10_000_000_000
 
     gas_cost_wei = gas_estimate * max_fee
     total_wei = price_wei + gas_cost_wei

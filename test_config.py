@@ -1,5 +1,7 @@
 """Unit tests: config.py"""
-import sys, os
+# ruff: noqa: E402
+import sys
+import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 

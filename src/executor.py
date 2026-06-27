@@ -1,6 +1,7 @@
 """Build tx, sign, countdown, execute, wait receipt."""
 
-import time, sys
+import time
+import sys
 from web3 import Web3, Account
 
 from .config import get_rpc, get_private_key, rpc_retry
@@ -8,8 +9,10 @@ from .config import get_rpc, get_private_key, rpc_retry
 def get_wallet() -> tuple:
     """Load wallet dari private key env."""
     pk = get_private_key()
-    if not pk or pk == '0x' + '0' * 64:
+    if not pk:
         return None, 'PRIVATE_KEY not set in .env'
+    if pk == '0x' + '0' * 64:
+        return None, 'PRIVATE_KEY is all zeros — use real key'
     try:
         acct = Account.from_key(pk)
         return acct, None
@@ -69,7 +72,7 @@ def execute_mint(contract: str, chain: str, tier: dict, custom_rpc: str = '',
     if private_key_override:
         try:
             acct = Account.from_key(private_key_override)
-        except:
+        except Exception:
             return {'status': 'error', 'message': 'Invalid private key'}
     else:
         acct, err = get_wallet()
@@ -81,7 +84,7 @@ def execute_mint(contract: str, chain: str, tier: dict, custom_rpc: str = '',
     # Checksum contract
     try:
         contract = Web3.to_checksum_address(contract)
-    except:
+    except Exception:
         return {'status': 'error', 'message': 'Invalid contract address'}
 
     # Build calldata
@@ -131,7 +134,7 @@ def execute_mint(contract: str, chain: str, tier: dict, custom_rpc: str = '',
             max_priority = fee_history['reward'][-1][0] if fee_history['reward'] else 1000000000
             tx['maxFeePerGas'] = base_fee + max_priority
             tx['maxPriorityFeePerGas'] = max_priority
-        except:
+        except Exception:
             tx['gasPrice'] = w3.eth.gas_price
 
     # Sign + send

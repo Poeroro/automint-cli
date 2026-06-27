@@ -10,20 +10,24 @@ Usage:
 Flow: input → detect → load wallets → eligibility → pilih wallet + tier → execute
 """
 
-import sys, os, time, argparse, json
+import sys
+import os
+import time
+import argparse
+import json
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv()  # noqa: E402
 
-from src.detect import detect
-from src.eligibility import check_eligibility, estimate_total_cost
-from src.executor import execute_mint, wait_for_countdown
-from src.display import (
+from src.detect import detect  # noqa: E402
+from src.eligibility import check_eligibility, estimate_total_cost  # noqa: E402
+from src.executor import execute_mint, wait_for_countdown  # noqa: E402
+from src.display import (  # noqa: E402
     show_banner, show_detect_result, show_eligibility,
     show_cost_estimate, show_report, show_wallets, show_gas_menu, console
-)
-from src.config import resolve_chain, get_rpc, CHAINS, get_all_wallets
-from web3 import Web3
+)  # noqa: E402
+from src.config import resolve_chain, get_rpc, CHAINS, get_all_wallets  # noqa: E402
+from web3 import Web3  # noqa: E402
 
 
 LOG_FILE = 'automint.log'
@@ -67,7 +71,7 @@ def verify_chain_id(w3: Web3, chain: str) -> bool:
         return True
     try:
         actual = w3.eth.chain_id
-    except:
+    except Exception:
         return True
     if actual != expected:
         console.print(f'[red]✕ Chain mismatch! RPC chainId={actual}, expected {chain}(id={expected})[/red]')
@@ -81,7 +85,7 @@ def append_log(entry: dict):
     try:
         with open(LOG_FILE, 'a') as f:
             f.write(json.dumps(entry) + '\n')
-    except:
+    except OSError:
         pass
 
 
@@ -175,7 +179,7 @@ def do_mint(contract, chain, tier, custom_rpc, quantity, wallet_info, dry_run, c
     if status and status.startswith('scheduled:'):
         ts = int(status.split(':')[1])
         console.print(f'\n[bold]⏳ Countdown:[/bold] {tier["name"]} opens at {time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(ts))}')
-        console.print(f'[dim]Auto-mint with selected gas at countdown end...[/dim]')
+        console.print('[dim]Auto-mint with selected gas at countdown end...[/dim]')
         ok = wait_for_countdown(ts, tier['name'])
         if not ok:
             return None
@@ -233,7 +237,7 @@ def show_batch_summary():
 
     console.print('\n')
     console.print('═' * 50)
-    console.print(f'[bold]📊 Batch Summary[/bold]')
+    console.print('[bold]📊 Batch Summary[/bold]')
     console.print(f'  ✅ {len(success)} success ({total_nft} NFT minted)')
     if failed:
         console.print(f'  ❌ {len(failed)} failed')
@@ -330,7 +334,7 @@ def main():
             break
 
         if first_pass:
-            console.print(f'\n[bold]🔎 Eligibility Check[/bold]')
+            console.print('\n[bold]🔎 Eligibility Check[/bold]')
             show_wallets(eligible_wallets, currency)
 
         # Pilih wallet
