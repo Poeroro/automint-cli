@@ -1,34 +1,52 @@
-"""Eligibility check: balance, whitelist, gas estimate."""
+"""Eligibility check: balance, whitelist, merkle, gas estimate."""
 
 from web3 import Web3
 
-from .config import get_rpc, rpc_retry
+from .config import get_working_rpc, rpc_retry
+from .detect import NO_ARG_SIGS, MERKLE_SIGS, build_calldata
 
-def check_eligibility(contract: str, chain: str, wallet: str, tiers: list, custom_rpc: str = '') -> list:
-    """Cek eligibility tiap tier buat wallet tertentu."""
-    rpc = custom_rpc or get_rpc(chain)
-    w3 = Web3(Web3.HTTPProvider(rpc))
-    if not w3.is_connected():
+
+def _resp_to_int(resp) -> int | None:
+    if resp is None:
+        return None
+    if isinstance(resp, (bytes, bytearray)):
+        resp = '0x' + resp.hex()
+    if not resp or resp in ('0x', '0x0'):
+        return None
+    try:
+        return int(resp, 16)
+    except (ValueError, TypeError):
+        return None
+
+
+def check_eligibility(contract: str, chain: str, wallet: str, tiers: list,
+                      custom_rpc: str = '', merkle_proofs: dict = None) -> list:
+    """Check eligibility for each tier for a given wallet.
+
+    merkle_proofs: optional {tier_name: [proof_hex, ...]}
+    """
+    try:
+        rpc = get_working_rpc(chain, custom_rpc)
+    except RuntimeError:
         return []
 
-    # Checksum
+    w3 = Web3(Web3.HTTPProvider(rpc))
+
     try:
         contract = Web3.to_checksum_address(contract)
         wallet = Web3.to_checksum_address(wallet)
     except Exception:
         return []
 
-    # Balance ETH
     wei_balance = w3.eth.get_balance(wallet)
     eth_balance = wei_balance / 1e18
 
-    # Minted count (balanceOf)
     minted = 0
-    balance_of_sig = '0x70a08231' + '0' * 24 + wallet[2:].lower()
     try:
-        resp = w3.eth.call({'to': contract, 'data': balance_of_sig})
-        if resp and resp != '0x':
-            minted = int(resp, 16)
+        data = '0x70a08231' + '000000000000000000000000' + wallet[2:].lower()
+        val = _resp_to_int(w3.eth.call({'to': contract, 'data': data}))
+        if val is not None:
+            minted = val
     except Exception:
         pass
 
@@ -38,48 +56,66 @@ def check_eligibility(contract: str, chain: str, wallet: str, tiers: list, custo
         price = tier.get('price', 0)
         method_sig = tier.get('methodSig', '')
         status = tier.get('status', 'unknown')
+        requires_merkle = tier.get('requiresMerkle', False) or method_sig in MERKLE_SIGS
 
         eligible = False
         reasons = []
 
-        # Whitelist check for non-public tiers
-        if 'public' not in name.lower():
-            view_sels = [
-                ('0x3af32abf', 'isWhitelisted'),
-                ('0x5c1f0ecf', 'isAllowlisted'),
-                ('0x415fc4b3', 'whitelisted'),
-            ]
-            for sel, _ in view_sels:
+        # ── Merkle allowlist tier ──
+        if requires_merkle:
+            proof = (merkle_proofs or {}).get(name, [])
+            if not proof:
+                reasons.append('merkle proof required — set MERKLE_PROOF in .env')
+            else:
+                calldata = build_calldata(method_sig, 1, proof)
                 try:
-                    data = sel + '0' * 24 + wallet[2:].lower()
-                    resp = w3.eth.call({'to': contract, 'data': data})
-                    if resp and resp not in ('0x', None) and len(resp) >= 66:
-                        val = int(resp, 16)
-                        if val == 1:
+                    w3.eth.call({'from': wallet, 'to': contract, 'data': calldata,
+                                 'value': hex(int(round(price * 1e18)))})
+                    if price == 0 or eth_balance >= price:
+                        eligible = True
+                        reasons.append('merkle proof valid')
+                    else:
+                        reasons.append(f'whitelisted but insufficient: {eth_balance:.4f} < {price}')
+                except Exception:
+                    reasons.append('merkle proof invalid or not whitelisted')
+
+        # ── Non-public on-chain whitelist ──
+        elif 'public' not in name.lower():
+            whitelist_sels = [
+                '0x3af32abf',  # isWhitelisted(address)
+                '0x5c1f0ecf',  # isAllowlisted(address)
+                '0x415fc4b3',  # whitelisted(address)
+            ]
+            for sel in whitelist_sels:
+                try:
+                    data = sel + '000000000000000000000000' + wallet[2:].lower()
+                    if _resp_to_int(w3.eth.call({'to': contract, 'data': data})) == 1:
+                        if price == 0 or eth_balance >= price:
                             eligible = True
                             reasons.append('whitelisted')
-                            break
+                        else:
+                            reasons.append(f'whitelisted but insufficient: {eth_balance:.4f} < {price}')
+                        break
                 except Exception:
                     pass
 
-        # Free tier — simulate mint
-        if not eligible and price == 0 and method_sig:
-            try:
-                calldata = method_sig + '0' * 63 + '1'
-                tx = {'from': wallet, 'to': contract, 'data': calldata, 'value': '0x0'}
-                w3.eth.call(tx)
-                eligible = True
-                reasons.append('free mint OK')
-            except Exception:
-                pass
+            # Free tier fallback: simulate call
+            if not eligible and price == 0 and method_sig:
+                calldata = method_sig if method_sig in NO_ARG_SIGS else method_sig + '0' * 63 + '1'
+                try:
+                    w3.eth.call({'from': wallet, 'to': contract, 'data': calldata, 'value': '0x0'})
+                    eligible = True
+                    reasons.append('free mint OK')
+                except Exception:
+                    pass
 
-        # Public paid — balance check
+        # ── Public paid tier ──
         if not eligible and 'public' in name.lower():
             if eth_balance >= price:
                 eligible = True
-                reasons.append(f'balance: {eth_balance:.4f} >= {price} ETH')
+                reasons.append(f'balance: {eth_balance:.4f} >= {price}')
             else:
-                reasons.append(f'insufficient: {eth_balance:.4f} < {price} ETH')
+                reasons.append(f'insufficient: {eth_balance:.4f} < {price}')
 
         if not eligible and not reasons:
             reasons.append('not eligible')
@@ -92,19 +128,24 @@ def check_eligibility(contract: str, chain: str, wallet: str, tiers: list, custo
             'reasons': reasons,
             'balance': eth_balance,
             'minted': minted,
+            'maxMint': tier.get('maxMint', 0),
+            'requiresMerkle': requires_merkle,
         })
 
     return results
 
 
-def estimate_total_cost(contract: str, chain: str, wallet: str, tier: dict, custom_rpc: str = '', quantity: int = 1) -> dict:
-    """Estimasi total cost: mint price (× qty) + gas."""
-    rpc = custom_rpc or get_rpc(chain)
-    w3 = Web3(Web3.HTTPProvider(rpc))
-    if not w3.is_connected():
-        return {'error': 'RPC not connected'}
+def estimate_total_cost(contract: str, chain: str, wallet: str, tier: dict,
+                        custom_rpc: str = '', quantity: int = 1,
+                        merkle_proof: list = None) -> dict:
+    """Estimate total cost: mint price (× qty) + gas."""
+    try:
+        rpc = get_working_rpc(chain, custom_rpc)
+    except RuntimeError as e:
+        return {'error': str(e)}
 
-    # Checksum
+    w3 = Web3(Web3.HTTPProvider(rpc))
+
     try:
         contract = Web3.to_checksum_address(contract)
         wallet = Web3.to_checksum_address(wallet)
@@ -112,24 +153,23 @@ def estimate_total_cost(contract: str, chain: str, wallet: str, tier: dict, cust
         return {'error': 'Invalid address'}
 
     price_per_unit = tier.get('price', 0)
-    price_wei = int(price_per_unit * quantity * 1e18)
-    method_sig = tier.get('methodSig', '')
-    if not method_sig:
-        method_sig = '0x1249c58b'
+    price_wei = int(round(price_per_unit * quantity * 1e18))
+    method_sig = tier.get('methodSig', '') or '0x1249c58b'
 
-    # Encode quantity
-    qty_hex = hex(quantity)[2:].zfill(64)
-    calldata = method_sig + qty_hex
+    calldata = build_calldata(method_sig, quantity, merkle_proof)
 
     try:
-        gas_estimate = w3.eth.estimate_gas({'from': wallet, 'to': contract, 'data': calldata, 'value': hex(price_wei)})
+        gas_estimate = w3.eth.estimate_gas({
+            'from': wallet, 'to': contract, 'data': calldata, 'value': hex(price_wei)
+        })
     except Exception as e:
         return {'error': f'estimate gas failed: {str(e)[:60]}'}
 
     try:
         fee_history = rpc_retry(lambda: w3.eth.fee_history(1, 'latest', [25]))
         base_fee = fee_history['baseFeePerGas'][-1]
-        max_priority = fee_history['reward'][-1][0] if fee_history['reward'] else 1000000000
+        rewards = fee_history.get('reward', [])
+        max_priority = rewards[-1][0] if rewards and rewards[-1] else 1_000_000_000
         max_fee = base_fee + max_priority
     except Exception:
         try:

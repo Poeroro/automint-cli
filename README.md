@@ -372,6 +372,7 @@ Priority RPC: `--rpc` CLI > `RPC_CHAIN` di `.env` > public default (tabel atas)
 ```bash
 automint [-h] [--url URL] [--contract CONTRACT] [--chain CHAIN]
          [--rpc RPC] [--dry-run] [--wallet WALLET]
+         [--watch] [--watch-interval SEC]
 ```
 
 | Argumen | Fungsi |
@@ -382,6 +383,8 @@ automint [-h] [--url URL] [--contract CONTRACT] [--chain CHAIN]
 | `--rpc RPC` | Custom RPC URL. Override env & default |
 | `--dry-run` | Cek doang — detect + eligibility + estimate, gak kirim tx |
 | `--wallet WALLET` | Wallet index buat multi-account. Contoh: `--wallet 0` atau `--wallet all` buat batch |
+| `--watch` | Watch mode — poll contract tiap N detik, auto-mint begitu tier live |
+| `--watch-interval SEC` | Interval poll watch mode dalam detik (default: 15) |
 | `-h`, `--help` | Tampilkan help |
 
 Kalo gak ada `--url` atau `--contract`, CLI bakal minta input interaktif.
@@ -392,16 +395,18 @@ Kalo gak ada `--url` atau `--contract`, CLI bakal minta input interaktif.
 
 ```
 automint-cli/
-├── automint.py             # Entry point utama (auto-exec dari symlink)
+├── automint.py             # Entry point utama
 ├── .env.example            # Template env variable
 ├── .gitignore              # .env gak masuk git
 ├── requirements.txt        # Dependency Python
 ├── automint.log            # Log hasil mint (JSON lines)
 └── src/
-    ├── config.py           # Chain config, RPC multichain, env loader, retry
-    ├── detect.py           # Scrape OS page + on-chain detect + chain resolve
-    ├── eligibility.py      # Cek whitelist, free mint, balance, gas estimate
-    ├── executor.py         # Build tx, sign, countdown, send, wait receipt
+    ├── config.py           # Chain config, RPC multichain + fallback, env loader
+    ├── detect.py           # OpenSea scrape + on-chain detect + scheduled tier
+    ├── eligibility.py      # Cek whitelist, merkle, balance, gas estimate
+    ├── executor.py         # Build tx, sign, countdown, gas bump, send, receipt
+    ├── merkle.py           # Fetch Merkle proof dari API / env / cache
+    ├── notify.py           # Notifikasi Telegram + Discord webhook
     └── display.py          # Rich CLI output (tables, panel, warna)
 ```
 
@@ -436,6 +441,54 @@ type automint.log
 4. **Chain mismatch** — kalo custom RPC chainId gak cocok, CLI abort. Dana lo aman.
 5. **Multi-key support** — multiple wallet via `PRIVATE_KEYS=0x...,0x...` di `.env`. Pilih wallet index atau `all` untuk batch mint.
 6. **Test pake dry-run dulu** — sebelum beneran mint, jalankan `--dry-run` biar tau estimasi biaya.
+7. **Gas guard** — set `MAX_GAS_GWEI=50` di `.env` biar CLI abort otomatis kalo gas terlalu tinggi.
+
+---
+
+## Fitur Lanjutan
+
+### Watch Mode
+Poll contract secara otomatis. Begitu tier live, langsung mint tanpa perlu pantau manual.
+
+```bash
+# Linux/Mac:
+automint --url https://opensea.io/collection/... --watch
+automint --url https://opensea.io/collection/... --watch --watch-interval 30
+
+# Windows:
+python automint.py --url https://opensea.io/collection/... --watch
+```
+
+CLI kirim notifikasi Telegram/Discord saat tier live (kalo dikonfigurasi).
+
+### Gas Guard
+Set batas maximum gas price. Mint di-abort otomatis kalo gas melebihi limit.
+
+```env
+# .env
+MAX_GAS_GWEI=50
+```
+
+### Merkle Proof (Allowlist)
+Contract dengan Merkle tree allowlist dideteksi otomatis. Proof di-fetch dari Highlight.xyz / Manifold API. Kalo gagal fetch otomatis, isi manual:
+
+```env
+# .env — pisah koma kalo lebih dari satu
+MERKLE_PROOF=0xabc...,0xdef...
+```
+
+### Notifikasi
+Dapat notif Telegram/Discord setiap mint selesai (sukses/gagal/pending).
+
+```env
+# .env
+TELEGRAM_BOT_TOKEN=1234567890:AAxxxxxx
+TELEGRAM_CHAT_ID=123456789
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+```
+
+### RPC Fallback Otomatis
+Kalo RPC utama down, CLI otomatis coba fallback ke endpoint publik lain (Ankr, LlamaRPC, dll). Gak perlu setup manual.
 
 ---
 
@@ -462,6 +515,15 @@ Kemungkinan: udah mint duluan, gak eligible pas real mint, atau contract pake me
 
 ### "Insufficient balance"
 Top up wallet. Cek balance sama total cost di estimasi.
+
+### "Gas too high: X Gwei > MAX_GAS_GWEI=Y. Aborted."
+Gas price lagi tinggi. Naikin `MAX_GAS_GWEI` di `.env`, atau tunggu gas turun. Kalo pake `--watch`, CLI otomatis tunggu gas turun sebelum mint.
+
+### "merkle proof required"
+Contract pake Merkle tree allowlist. Coba tunggu beberapa saat (proof di-fetch otomatis dari API). Kalo tetap gagal, isi `MERKLE_PROOF=0x...` di `.env` secara manual.
+
+### "No reachable RPC for X"
+Semua endpoint publik down. Set `RPC_ETH` (atau chain lain) di `.env` pake Alchemy/Infura.
 
 ### Gak tau harus ngapain?
 Tinggal:

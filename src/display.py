@@ -184,9 +184,9 @@ def show_gas_menu(w3, chain='ethereum'):
                 base = lo * 10
 
         opts = [
-            ('🐢 Low', lo, f'~{bt * 3}s'),
+            ('🐢 Low',    lo, f'~{bt * 3}s'),
             ('🚶 Medium', md, f'~{bt}s'),
-            ('🚀 High', hi, f'~{bt // 2}s'),
+            ('🚀 High',   hi, f'~{max(1, bt // 2)}s'),
         ]
 
         console.print('\n[bold]🔥 Gas Price Selection[/bold]')
@@ -267,34 +267,36 @@ def show_report(report: dict, chain: str = ''):
     """Tampilkan laporan hasil mint."""
     status = report.get('status', 'unknown')
     currency = _get_currency(chain)
+    exp = CHAINS.get(chain, {}).get('explorer', 'etherscan.io')
 
     if status == 'success':
-        explorer = {'ethereum': 'etherscan.io', 'base': 'basescan.org',
-                    'optimism': 'optimistic.etherscan.io', 'arbitrum': 'arbiscan.io',
-                    'polygon': 'polygonscan.com', 'bsc': 'bscscan.com'}
-        exp = explorer.get(chain, 'etherscan.io')
-
+        tx = report.get('tx_hash', '')
+        tx_short = f'{tx[:18]}...{tx[-6:]}' if tx else '?'
         console.print(Panel.fit(
             '[bold green]✅ MINT SUCCESS[/bold green]\n\n'
-            f'[bold]Tx:[/bold]     [link=https://{exp}/tx/{report["tx_hash"]}]{report["tx_hash"][:18]}...{report["tx_hash"][-6:]}[/link]\n'
-            f'[bold]Block:[/bold]  {report["block"]:,}\n'
-            f'[bold]Gas:[/bold]    {report["gas_used"]:,} units @ {report["gas_price_gwei"]:.2f} Gwei\n'
-            f'[bold]Gas Fee:[/bold] {report["gas_cost_eth"]:.6f} {currency}\n'
-            f'[bold]Total:[/bold]  [cyan]{report["total_cost_eth"]:.6f} {currency}[/cyan]',
+            f'[bold]Tx:[/bold]     [link=https://{exp}/tx/{tx}]{tx_short}[/link]\n'
+            f'[bold]Block:[/bold]  {report.get("block", 0):,}\n'
+            f'[bold]Gas:[/bold]    {report.get("gas_used", 0):,} units @ {report.get("gas_price_gwei", 0):.2f} Gwei\n'
+            f'[bold]Gas Fee:[/bold] {report.get("gas_cost_eth", 0):.6f} {currency}\n'
+            f'[bold]Total:[/bold]  [cyan]{report.get("total_cost_eth", 0):.6f} {currency}[/cyan]',
             border_style='green', padding=(1, 2)
         ))
-        console.print(f'   [dim]Explorer: https://{exp}/tx/{report["tx_hash"]}[/dim]')
+        console.print(f'   [dim]Explorer: https://{exp}/tx/{tx}[/dim]')
 
     elif status == 'failed':
+        tx = report.get('tx_hash', '') or '?'
+        tx_short = f'{tx[:18]}...' if tx != '?' else '?'
         console.print(Panel.fit(
             '[bold red]❌ MINT FAILED[/bold red]\n\n'
-            f'Tx: {report.get("tx_hash", "?")[:18]}...\n'
+            f'Tx: {tx_short}\n'
             f'Error: {report.get("message", "unknown")}',
             border_style='red', padding=(1, 2)
         ))
 
     elif status == 'pending':
-        console.print(f'[yellow]⏳ Tx sent: {report["tx_hash"][:18]}... — waiting for receipt[/yellow]')
+        tx = report.get('tx_hash', '') or '?'
+        tx_short = f'{tx[:18]}...' if tx != '?' else '?'
+        console.print(f'[yellow]⏳ Tx sent: {tx_short} — waiting for receipt[/yellow]')
 
     else:
         console.print(f'[red]✕ {report.get("message", "Unknown error")}[/red]')
