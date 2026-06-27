@@ -181,15 +181,38 @@ def execute_mint(contract: str, chain: str, tier: dict, custom_rpc: str = '',
     except Exception:
         return {'status': 'error', 'message': 'Invalid contract address'}
 
-    readiness = check_contract_ready(w3, contract)
-    if not readiness['ok']:
-        return {'status': 'error', 'message': readiness['reason']}
+    # SeaDrop protocol: tx goes to SeaDrop contract, not the NFT contract
+    mint_target = contract
+    if tier.get('mintTarget'):
+        try:
+            mint_target = Web3.to_checksum_address(tier['mintTarget'])
+        except Exception:
+            pass
+
+    # Skip paused/sold-out check for SeaDrop (different interface)
+    if tier.get('protocol') != 'seadrop_v1':
+        readiness = check_contract_ready(w3, contract)
+        if not readiness['ok']:
+            return {'status': 'error', 'message': readiness['reason']}
 
     method_sig = tier.get('methodSig', '0x1249c58b')
     price_per_unit = tier.get('price', 0)
     price_wei = int(round(price_per_unit * quantity * 1e18))
 
-    calldata = build_calldata(method_sig, quantity, merkle_proof)
+    if tier.get('protocol') == 'seadrop_v1':
+        # SeaDrop v1 mintPublic calldata:
+        # mintPublic(address nftContract, address feeRecipient, address minterIfNotPayer, uint256 quantity)
+        # feeRecipient = OpenSea fee recipient (0x0000a26b00c1F0DF003000390027140000fAa719)
+        fee_recipient = '0x0000a26b00c1F0DF003000390027140000fAa719'
+        calldata = (
+            '0x161ac21f'  # mintPublic(address nftContract, address feeRecipient, address minterIfNotPayer, uint256 quantity)
+            + '000000000000000000000000' + contract[2:].lower()
+            + '000000000000000000000000' + fee_recipient[2:].lower()
+            + '000000000000000000000000' + wallet[2:].lower()
+            + hex(quantity)[2:].zfill(64)
+        )
+    else:
+        calldata = build_calldata(method_sig, quantity, merkle_proof)
 
     balance_wei = w3.eth.get_balance(wallet)
     if balance_wei < price_wei:
@@ -198,7 +221,7 @@ def execute_mint(contract: str, chain: str, tier: dict, custom_rpc: str = '',
 
     try:
         gas_estimate = rpc_retry(lambda: w3.eth.estimate_gas({
-            'from': wallet, 'to': contract, 'data': calldata, 'value': hex(price_wei)
+            'from': wallet, 'to': mint_target, 'data': calldata, 'value': hex(price_wei)
         }))
     except Exception as e:
         return {'status': 'error', 'message': f'estimate gas: {str(e)[:80]}'}
@@ -206,7 +229,7 @@ def execute_mint(contract: str, chain: str, tier: dict, custom_rpc: str = '',
     nonce = w3.eth.get_transaction_count(wallet, 'pending')
 
     tx: dict = {
-        'to': contract,
+        'to': mint_target,
         'data': calldata,
         'value': price_wei,
         'gas': gas_estimate,

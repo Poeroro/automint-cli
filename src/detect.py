@@ -61,6 +61,13 @@ SCHEDULE_SELECTORS = {
     ],
 }
 
+# SeaDrop v1 contract address (same across all EVM chains)
+SEADROP_V1 = '0x00005EA00Ac477B1030CE78506496e8C2dE24bf5'
+# Selector: getPublicDrop(address nftContract) on SeaDrop contract
+_SEADROP_GET_PUBLIC_DROP = '0xbc6a629c'
+# Selector: getAllowedSeaDrop() on NFT contract — indicates SeaDrop v1
+_SEADROP_INDICATOR = '0xb2490c3b'
+
 CACHE_DIR = '.cache'
 CACHE_TTL = 3600  # 1 hour
 
@@ -245,6 +252,84 @@ def _resolve_start_time(w3: Web3, contract: str, tier_name: str) -> int | None:
     return None
 
 
+def _resolve_implementation(w3: Web3, contract: str) -> str:
+    """If contract is a proxy, return the implementation address.
+
+    Supports EIP-1167 (minimal proxy) and EIP-1967 (transparent proxy).
+    Returns the original contract address if not a proxy.
+    """
+    try:
+        code = w3.eth.get_code(contract)
+        hex_code = code.hex() if isinstance(code, (bytes, bytearray)) else str(code)[2:]
+
+        # EIP-1167 minimal proxy: 363d3d373d3d3d363d73{20-byte-addr}...
+        m = re.search(r'363d3d373d3d3d363d73([0-9a-f]{40})', hex_code)
+        if m:
+            return Web3.to_checksum_address('0x' + m.group(1))
+
+        # EIP-1967 transparent proxy — implementation slot
+        slot = '0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc'
+        val = w3.eth.get_storage_at(contract, slot)
+        addr_hex = val.hex()[-40:]
+        if addr_hex and addr_hex != '0' * 40:
+            return Web3.to_checksum_address('0x' + addr_hex)
+
+    except Exception:
+        pass
+    return contract
+
+
+def _detect_seadrop(w3: Web3, contract: str) -> dict | None:
+    """Detect SeaDrop v1 drop info for an NFT contract.
+
+    Returns a tier dict if the contract uses SeaDrop v1, else None.
+    SeaDrop is OpenSea's native launchpad — mint goes via the SeaDrop
+    contract, not directly to the NFT contract.
+    """
+    try:
+        seadrop = Web3.to_checksum_address(SEADROP_V1)
+        # getPublicDrop(address nftContract)
+        calldata = _SEADROP_GET_PUBLIC_DROP + '000000000000000000000000' + contract[2:].lower()
+        resp = w3.eth.call({'to': seadrop, 'data': calldata})
+        hex_r = resp.hex() if isinstance(resp, (bytes, bytearray)) else str(resp)[2:]
+
+        if not hex_r or len(hex_r) < 128:
+            return None
+
+        chunks = [hex_r[i:i + 64] for i in range(0, len(hex_r), 64)]
+        mint_price_wei = int(chunks[0], 16)
+        start_time     = int(chunks[1], 16) if len(chunks) > 1 else 0
+        end_time       = int(chunks[2], 16) if len(chunks) > 2 else 0
+        max_per_wallet = int(chunks[3], 16) if len(chunks) > 3 else 0
+
+        # mintPrice=0 and startTime=0 usually means drop not configured
+        if mint_price_wei == 0 and start_time == 0:
+            return None
+
+        now = int(time.time())
+        if end_time > 0 and now > end_time:
+            return None  # drop has ended
+
+        if start_time > now:
+            status = f'scheduled:{start_time}'
+        else:
+            status = 'active'
+
+        return {
+            'name': 'Public',
+            'price': mint_price_wei / 1e18,
+            # SeaDrop: mint is sent TO the SeaDrop contract, not the NFT contract
+            'methodSig': '0x161e2100',  # mintPublic (called on SeaDrop)
+            'mintTarget': SEADROP_V1,   # override: tx goes here
+            'status': status,
+            'maxMint': max_per_wallet,
+            'requiresMerkle': False,
+            'protocol': 'seadrop_v1',
+        }
+    except Exception:
+        return None
+
+
 def _scan_bytecode(bytecode_hex: str, selectors: list[str]) -> set[str]:
     """Return which 4-byte selectors are present in contract bytecode.
 
@@ -287,6 +372,10 @@ def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
     w3 = Web3(Web3.HTTPProvider(rpc))
     chain_id = w3.eth.chain_id
 
+    # ── Resolve proxy ──
+    # Scan bytecode of the implementation, not the proxy shell
+    impl_contract = _resolve_implementation(w3, contract)
+
     # ── Fetch bytecode (for tier detection) and run eth_calls in parallel ──
     view_selectors: dict[str, str] = {
         'name':   '0x06fdde03',
@@ -315,7 +404,8 @@ def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
 
     def _get_code():
         try:
-            code = w3.eth.get_code(contract)
+            # Scan impl bytecode so proxy shells don't hide selectors
+            code = w3.eth.get_code(impl_contract)
             return code.hex() if isinstance(code, (bytes, bytearray)) else str(code)[2:]
         except Exception:
             return ''
@@ -367,18 +457,28 @@ def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
     if s_raw:
         result['symbol'] = _decode_abi_string(s_raw)
 
-    # ── Tier detection via bytecode scan ──
-    # Collect all tier selectors and check which exist in bytecode
-    all_tier_sels = [sel for _, sels in TIER_METHODS for sel in sels]
-    present_sels = _scan_bytecode(bytecode_hex, all_tier_sels)
-
+    # ── Tier detection ──
     now = int(time.time())
     detected = []
 
+    # 1. SeaDrop v1 protocol check (OpenSea native launchpad)
+    seadrop_tier = _detect_seadrop(w3, contract)
+    if seadrop_tier:
+        detected.append(seadrop_tier)
+        # Override price from SeaDrop if standard selectors found nothing
+        onchain_price = int(seadrop_tier['price'] * 1e18)
+
+    # 2. Standard bytecode scan for direct-mint contracts
+    all_tier_sels = [sel for _, sels in TIER_METHODS for sel in sels]
+    present_sels = _scan_bytecode(bytecode_hex, all_tier_sels)
+
     for tn, sels in TIER_METHODS:
-        # Pick first selector of this tier that exists in bytecode
         found_sig = next((sel for sel in sels if sel in present_sels), None)
         if not found_sig:
+            continue
+
+        # Skip if SeaDrop already added a Public tier
+        if tn == 'Public' and seadrop_tier:
             continue
 
         start_ts = _resolve_start_time(w3, contract, tn)
