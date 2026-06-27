@@ -308,12 +308,8 @@ def run_watch_mode(input_str, chain_hint, custom_rpc, args):
         time.sleep(interval)
 
 
-def main():
-    args = parse_args()
-    check_env_file()
-    show_banner()
-
-    input_str, chain_hint_raw, custom_rpc, dry_run = prompt_input(args)
+def _run_session(args, input_str, chain_hint_raw, custom_rpc, dry_run) -> bool:
+    """Run one full mint session. Returns True if should retry (back to menu), False to exit."""
 
     chain_hint = resolve_chain(chain_hint_raw)
     if chain_hint_raw and not chain_hint:
@@ -327,18 +323,17 @@ def main():
             result = run_watch_mode(input_str, chain_hint, custom_rpc, args)
         except KeyboardInterrupt:
             console.print('\n[dim]Watch mode stopped.[/dim]')
-            sys.exit(0)
+            return True
         except Exception as e:
             console.print(f'[red]✕ Watch mode error: {e}[/red]')
-            sys.exit(1)
+            return True
     else:
-        # ── Normal detect ──
         console.print(f'\n[bold]🔍 Detecting:[/bold] {input_str[:60]}...')
         result = detect(input_str, chain_hint, custom_rpc)
 
         if result.get('error'):
             console.print(f'[red]✕ {result["error"]}[/red]')
-            sys.exit(1)
+            return True  # back to menu
 
     show_detect_result(result)
 
@@ -348,19 +343,18 @@ def main():
     currency = CHAINS.get(chain, {}).get('currency', 'ETH')
 
     if not tiers:
-        console.print('[yellow]No tiers detected. Cannot proceed.[/yellow]')
-        sys.exit(1)
+        console.print('[yellow]⚠ No tiers detected for this collection.[/yellow]')
+        return True  # back to menu
 
-    # ── RPC with fallback ──
+    # ── RPC ──
     try:
         rpc = get_working_rpc(chain, custom_rpc)
     except RuntimeError as e:
         console.print(f'[red]✕ {e}[/red]')
-        sys.exit(1)
+        return True
 
     w3 = Web3(Web3.HTTPProvider(rpc))
 
-    # Chain ID check only when custom RPC provided
     if custom_rpc:
         expected_id = CHAINS.get(chain, {}).get('id')
         try:
@@ -368,7 +362,7 @@ def main():
             if expected_id and actual_id != expected_id:
                 console.print(f'[red]✕ Chain mismatch! RPC chainId={actual_id}, expected {chain}(id={expected_id})[/red]')
                 if input('Force continue? [y/N] > ').strip().lower() != 'y':
-                    sys.exit(1)
+                    return True
         except Exception:
             pass
 
@@ -376,11 +370,11 @@ def main():
     all_wallets = get_all_wallets()
     if not all_wallets:
         console.print('[red]✕ No wallets found. Set PRIVATE_KEY or PRIVATE_KEYS in .env[/red]')
-        sys.exit(1)
+        return False  # env problem — exit
 
     console.print(f'\n[bold]👛 Wallets loaded:[/bold] {len(all_wallets)}')
 
-    # ── Eligibility per wallet (with Merkle proofs) ──
+    # ── Eligibility ──
     merkle_proofs_by_wallet = {}
     wallets_info = []
 
@@ -410,29 +404,25 @@ def main():
             'best_tier': eligible_tiers[0] if eligible_tiers else None,
         })
 
-    # ── Show eligibility ──
     eligible_wallets = [w for w in wallets_info if w['best_tier']]
     if not eligible_wallets:
-        # Give a specific message if tiers exist but balance is the only issue
         _all_elig = [e for w in wallets_info for e in w.get('eligibility', [])]
         _insuf = [e for e in _all_elig if any('insufficient' in r for r in e.get('reasons', []))]
         if _insuf:
             e = _insuf[0]
             console.print(
-                f'[red]✕ Wallet balance insufficient.[/red] '
+                f'\n[red]✕ Wallet balance insufficient.[/red] '
                 f'Need [cyan]{e["price"]} {currency}[/cyan], '
-                f'have [yellow]{e["balance"]:.6f} {currency}[/yellow]. '
-                f'Top up wallet and try again.'
+                f'have [yellow]{e["balance"]:.6f} {currency}[/yellow].\n'
+                f'  Top up wallet then try again with another URL, or press Enter to go back.'
             )
         else:
-            console.print('[red]✕ No wallet eligible for any tier[/red]')
-        show_batch_summary()
-        return
+            console.print('\n[red]✕ No wallet eligible for any tier.[/red]')
+        return True  # back to menu
 
     console.print('\n[bold]🔎 Eligibility Check[/bold]')
     show_wallets(eligible_wallets, currency)
 
-    # Show gas guard status if set
     max_gas_wei = get_max_gas_wei()
     if max_gas_wei:
         current_gas = _get_current_gas_wei(w3)
@@ -452,9 +442,8 @@ def main():
             target_wallets = [eligible_wallets[idx]]
         except (ValueError, IndexError):
             console.print(f'[red]Invalid --wallet value: {raw_wallet}[/red]')
-            return
+            return True
     else:
-        # Interactive: auto-select if only one wallet, else ask
         if len(eligible_wallets) == 1:
             target_wallets = eligible_wallets
             console.print(f'\n[green]→ Auto-selected wallet 0: {eligible_wallets[0]["address"][:10]}...[/green]')
@@ -470,7 +459,7 @@ def main():
             except (ValueError, IndexError, EOFError, KeyboardInterrupt):
                 target_wallets = [eligible_wallets[0]]
 
-    # ── Select tier (once, shared across all target wallets) ──
+    # ── Select tier ──
     first_wallet = target_wallets[0]
     show_eligibility(first_wallet['eligibility'], first_wallet['address'],
                      first_wallet['balance_eth'], currency)
@@ -479,7 +468,6 @@ def main():
     quantity = prompt_quantity(selected_tier)
 
     # ── Gas selection ──
-    # For scheduled tiers: select gas NOW so user can walk away and mint fires automatically
     is_scheduled = selected_tier.get('status', '').startswith('scheduled:')
     if is_scheduled:
         ts = int(selected_tier['status'].split(':')[1])
@@ -489,7 +477,7 @@ def main():
         )
     gas_params = show_gas_menu(w3, chain)
 
-    # ── Cost estimate (skip for scheduled — gas price will change by then) ──
+    # ── Cost estimate ──
     if not is_scheduled:
         console.print('\n[bold]💰 Estimating cost...[/bold]')
         proof_for_est = merkle_proofs_by_wallet.get(first_wallet['address'], {}).get(selected_tier['name'])
@@ -501,16 +489,19 @@ def main():
             console.print(f'[yellow]⚠ Gas estimate failed: {est["error"]}[/yellow]')
             console.print('[yellow]  Proceeding — user bears risk[/yellow]')
         elif est['total_wei'] > first_wallet['balance_wei']:
-            console.print(f'\n[red]✕ Insufficient balance! Need {est["total_eth"]:.6f} {currency}[/red]')
-            show_batch_summary()
-            return
+            console.print(
+                f'\n[red]✕ Insufficient balance after gas estimate![/red] '
+                f'Need [cyan]{est["total_eth"]:.6f} {currency}[/cyan], '
+                f'have [yellow]{first_wallet["balance_eth"]:.6f} {currency}[/yellow].'
+            )
+            return True  # back to menu
         else:
             console.print(
                 f'\n[green]✅ Balance sufficient '
                 f'({first_wallet["balance_eth"]:.6f} >= {est["total_eth"]:.6f})[/green]'
             )
 
-    # ── Execute for each target wallet ──
+    # ── Execute ──
     if len(target_wallets) > 1:
         console.print(f'\n[bold]═══ Batch mint: {len(target_wallets)} wallets ═══[/bold]')
 
@@ -524,10 +515,53 @@ def main():
         mint_result = do_mint(contract, chain, tier_for_wallet, custom_rpc, quantity,
                               w, dry_run, currency, gas_params, proof)
         if mint_result is None:
-            # User cancelled countdown
             break
 
     show_batch_summary()
+    return False  # done, exit normally
+
+
+def main():
+    args = parse_args()
+    check_env_file()
+    show_banner()
+
+    # ── CLI args mode: run once, no retry loop ──
+    if args.url or args.contract:
+        input_str, chain_hint_raw, custom_rpc, dry_run = prompt_input(args)
+        _run_session(args, input_str, chain_hint_raw, custom_rpc, dry_run)
+        return
+
+    # ── Interactive mode: loop back to menu on failure ──
+    while True:
+        console.print()
+        console.print('[bold]Target NFT[/bold]')
+        console.print('  Paste [cyan]OpenSea URL[/cyan] atau [cyan]contract address[/cyan] (0x...)')
+        console.print('  [dim]Ketik q atau Ctrl+C untuk keluar[/dim]')
+        try:
+            val = input('> ').strip()
+        except (EOFError, KeyboardInterrupt):
+            console.print('\n[dim]Keluar.[/dim]')
+            break
+
+        if not val or val.lower() in ('q', 'quit', 'exit'):
+            console.print('[dim]Keluar.[/dim]')
+            break
+
+        # Detect chain hint if user typed contract + chain together (e.g. "0x... base")
+        parts = val.split()
+        chain_hint_raw = ''
+        if len(parts) == 2 and parts[0].startswith('0x'):
+            val, chain_hint_raw = parts[0], parts[1]
+
+        # Override chain from --chain if given
+        if args.chain:
+            chain_hint_raw = args.chain
+
+        should_retry = _run_session(args, val, chain_hint_raw, args.rpc, args.dry_run)
+        if not should_retry:
+            break
+        # should_retry=True → loop back, show menu again
 
 
 if __name__ == '__main__':
