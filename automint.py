@@ -113,12 +113,7 @@ def prompt_input(args):
     while not val:
         val = input('> ').strip()
 
-    dry_run = args.dry_run
-    if not dry_run:
-        ans = input('Dry-run only? (cek doang, gak mint) [y/N] > ').strip().lower()
-        dry_run = ans == 'y'
-
-    return val, args.chain, args.rpc, dry_run
+    return val, args.chain, args.rpc, args.dry_run
 
 
 def select_tier_interactive(eligible_tiers, currency):
@@ -143,6 +138,10 @@ def select_tier_interactive(eligible_tiers, currency):
 def prompt_quantity(tier):
     max_mint = tier.get('maxMint', 0)
     if max_mint <= 1:
+        return 1
+    # Only ask quantity if max_mint is small (≤20); for large supplies default to 1
+    if max_mint > 20:
+        console.print(f'\n[dim]Max per wallet: {max_mint} — minting 1 (use --quantity to override)[/dim]')
         return 1
     console.print(f'\n[bold]Quantity:[/bold] Max per tx = [cyan]{max_mint}[/cyan]')
     try:
@@ -411,126 +410,121 @@ def main():
             'best_tier': eligible_tiers[0] if eligible_tiers else None,
         })
 
-    # ── Main loop ──
-    first_pass = True
-    while True:
-        eligible_wallets = [w for w in wallets_info if w['best_tier']]
-        if not eligible_wallets:
+    # ── Show eligibility ──
+    eligible_wallets = [w for w in wallets_info if w['best_tier']]
+    if not eligible_wallets:
+        # Give a specific message if tiers exist but balance is the only issue
+        _all_elig = [e for w in wallets_info for e in w.get('eligibility', [])]
+        _insuf = [e for e in _all_elig if any('insufficient' in r for r in e.get('reasons', []))]
+        if _insuf:
+            e = _insuf[0]
+            console.print(
+                f'[red]✕ Wallet balance insufficient.[/red] '
+                f'Need [cyan]{e["price"]} {currency}[/cyan], '
+                f'have [yellow]{e["balance"]:.6f} {currency}[/yellow]. '
+                f'Top up wallet and try again.'
+            )
+        else:
             console.print('[red]✕ No wallet eligible for any tier[/red]')
-            break
+        show_batch_summary()
+        return
 
-        if first_pass:
-            console.print('\n[bold]🔎 Eligibility Check[/bold]')
-            show_wallets(eligible_wallets, currency)
+    console.print('\n[bold]🔎 Eligibility Check[/bold]')
+    show_wallets(eligible_wallets, currency)
 
-            # Show gas guard status if set
-            max_gas_wei = get_max_gas_wei()
-            if max_gas_wei:
-                current_gas = _get_current_gas_wei(w3)
-                status_color = 'green' if current_gas <= max_gas_wei else 'red'
-                console.print(
-                    f'\n[bold]⛽ Gas:[/bold] [{status_color}]{current_gas/1e9:.1f} Gwei[/{status_color}]'
-                    f' | limit: {max_gas_wei/1e9:.1f} Gwei'
-                )
+    # Show gas guard status if set
+    max_gas_wei = get_max_gas_wei()
+    if max_gas_wei:
+        current_gas = _get_current_gas_wei(w3)
+        status_color = 'green' if current_gas <= max_gas_wei else 'red'
+        console.print(
+            f'\n[bold]⛽ Gas:[/bold] [{status_color}]{current_gas/1e9:.1f} Gwei[/{status_color}]'
+            f' | limit: {max_gas_wei/1e9:.1f} Gwei'
+        )
 
-        raw_wallet = args.wallet
-        if raw_wallet == '-1':
-            if len(eligible_wallets) == 1 and first_pass:
-                wallet_index = 0
-                console.print(f'\n[green]→ Auto-selected wallet 0: {eligible_wallets[0]["address"][:10]}...[/green]')
-            else:
-                options = ' / '.join(str(i) for i in range(len(eligible_wallets)))
-                if len(eligible_wallets) > 1:
-                    options += " / 'all'"
-                try:
-                    ans = input(f'\nSelect wallet [{options}] > ').strip().lower()
-                    wallet_index = 'all' if ans == 'all' else int(ans)
-                except (ValueError, EOFError, KeyboardInterrupt):
-                    wallet_index = 0 if first_pass else None
-                if wallet_index is None:
-                    break
-        elif raw_wallet == 'all':
-            wallet_index = 'all'
+    # ── Resolve target wallets ──
+    raw_wallet = args.wallet
+    if raw_wallet == 'all':
+        target_wallets = eligible_wallets
+    elif raw_wallet != '-1':
+        try:
+            idx = int(raw_wallet)
+            target_wallets = [eligible_wallets[idx]]
+        except (ValueError, IndexError):
+            console.print(f'[red]Invalid --wallet value: {raw_wallet}[/red]')
+            return
+    else:
+        # Interactive: auto-select if only one wallet, else ask
+        if len(eligible_wallets) == 1:
+            target_wallets = eligible_wallets
+            console.print(f'\n[green]→ Auto-selected wallet 0: {eligible_wallets[0]["address"][:10]}...[/green]')
         else:
+            options = ' / '.join(str(i) for i in range(len(eligible_wallets))) + " / 'all'"
             try:
-                wallet_index = int(raw_wallet)
-            except ValueError:
-                console.print(f'[red]Invalid --wallet value: {raw_wallet}[/red]')
-                break
+                ans = input(f'\nSelect wallet [{options}] > ').strip().lower()
+                if ans == 'all':
+                    target_wallets = eligible_wallets
+                else:
+                    idx = int(ans)
+                    target_wallets = [eligible_wallets[idx]]
+            except (ValueError, IndexError, EOFError, KeyboardInterrupt):
+                target_wallets = [eligible_wallets[0]]
 
-        if wallet_index == 'all':
-            first_wallet = eligible_wallets[0]
-            selected_tier = select_tier_interactive(first_wallet['eligible_tiers'], currency)
-            quantity = prompt_quantity(selected_tier)
-            gas_params = show_gas_menu(w3, chain)
-            console.print(f'\n[bold]═══ Batch mint: {len(eligible_wallets)} wallets ═══[/bold]')
+    # ── Select tier (once, shared across all target wallets) ──
+    first_wallet = target_wallets[0]
+    show_eligibility(first_wallet['eligibility'], first_wallet['address'],
+                     first_wallet['balance_eth'], currency)
 
-            for w in eligible_wallets:
-                match = [t for t in w['eligible_tiers'] if t['name'] == selected_tier['name']]
-                if not match:
-                    console.print(f'  [dim]{w["address"][:10]}... — no {selected_tier["name"]}, skip[/dim]')
-                    continue
-                proof = merkle_proofs_by_wallet.get(w['address'], {}).get(selected_tier['name'])
-                do_mint(contract, chain, match[0], custom_rpc, quantity, w, dry_run,
-                        currency, gas_params, proof)
-            break
+    selected_tier = select_tier_interactive(first_wallet['eligible_tiers'], currency)
+    quantity = prompt_quantity(selected_tier)
 
-        elif 0 <= wallet_index < len(eligible_wallets):
-            wallet_info = eligible_wallets[wallet_index]
-            addr_short = f'{wallet_info["address"][:10]}...{wallet_info["address"][-6:]}'
-            console.print(f'\n[bold]→ Wallet {wallet_index}:[/bold] [cyan]{addr_short}[/cyan]')
+    # ── Gas selection ──
+    # For scheduled tiers: select gas NOW so user can walk away and mint fires automatically
+    is_scheduled = selected_tier.get('status', '').startswith('scheduled:')
+    if is_scheduled:
+        ts = int(selected_tier['status'].split(':')[1])
+        console.print(
+            f'\n[yellow]⏳ Tier is scheduled — select gas now, '
+            f'CLI will auto-mint at {time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(ts))}[/yellow]'
+        )
+    gas_params = show_gas_menu(w3, chain)
 
-            show_eligibility(wallet_info['eligibility'], wallet_info['address'],
-                             wallet_info['balance_eth'], currency)
+    # ── Cost estimate (skip for scheduled — gas price will change by then) ──
+    if not is_scheduled:
+        console.print('\n[bold]💰 Estimating cost...[/bold]')
+        proof_for_est = merkle_proofs_by_wallet.get(first_wallet['address'], {}).get(selected_tier['name'])
+        est = estimate_total_cost(contract, chain, first_wallet['address'], selected_tier,
+                                  custom_rpc, quantity, proof_for_est)
+        show_cost_estimate(est, currency)
 
-            if not wallet_info['eligible_tiers']:
-                console.print('[red]✕ No eligible tier[/red]')
-                if not first_pass:
-                    break
-                continue
-
-            selected_tier = select_tier_interactive(wallet_info['eligible_tiers'], currency)
-            quantity = prompt_quantity(selected_tier)
-
-            console.print('\n[bold]💰 Estimating cost...[/bold]')
-            proof = merkle_proofs_by_wallet.get(wallet_info['address'], {}).get(selected_tier['name'])
-            est = estimate_total_cost(contract, chain, wallet_info['address'], selected_tier,
-                                      custom_rpc, quantity, proof)
-            show_cost_estimate(est, currency)
-
-            if est.get('error'):
-                console.print(f'[yellow]⚠ Gas estimate failed: {est["error"]}[/yellow]')
-                console.print('[yellow]  Proceeding — user bears risk[/yellow]')
-            elif est['total_wei'] > wallet_info['balance_wei']:
-                console.print(f'\n[red]✕ Insufficient balance! Need {est["total_eth"]:.6f} {currency}[/red]')
-                break
-            else:
-                console.print(
-                    f'\n[green]✅ Balance sufficient '
-                    f'({wallet_info["balance_eth"]:.6f} >= {est["total_eth"]:.6f})[/green]'
-                )
-
-            gas_params = show_gas_menu(w3, chain)
-            mint_result = do_mint(contract, chain, selected_tier, custom_rpc, quantity,
-                                  wallet_info, dry_run, currency, gas_params, proof)
-            if mint_result is None:
-                break
-
+        if est.get('error'):
+            console.print(f'[yellow]⚠ Gas estimate failed: {est["error"]}[/yellow]')
+            console.print('[yellow]  Proceeding — user bears risk[/yellow]')
+        elif est['total_wei'] > first_wallet['balance_wei']:
+            console.print(f'\n[red]✕ Insufficient balance! Need {est["total_eth"]:.6f} {currency}[/red]')
+            show_batch_summary()
+            return
         else:
-            console.print('[red]Invalid selection[/red]')
-            break
+            console.print(
+                f'\n[green]✅ Balance sufficient '
+                f'({first_wallet["balance_eth"]:.6f} >= {est["total_eth"]:.6f})[/green]'
+            )
 
-        first_pass = False
-        if wallet_index != 'all':
-            others = [w for w in eligible_wallets
-                      if w['address'] != eligible_wallets[wallet_index]['address'] and w['best_tier']]
-            if others:
-                ans = input('\nMint another wallet? [y/N] > ').strip().lower()
-                if ans != 'y':
-                    break
-            else:
-                break
-        else:
+    # ── Execute for each target wallet ──
+    if len(target_wallets) > 1:
+        console.print(f'\n[bold]═══ Batch mint: {len(target_wallets)} wallets ═══[/bold]')
+
+    for w in target_wallets:
+        match = [t for t in w['eligible_tiers'] if t['name'] == selected_tier['name']]
+        if not match:
+            console.print(f'  [dim]{w["address"][:10]}... — tier {selected_tier["name"]} not eligible, skip[/dim]')
+            continue
+        tier_for_wallet = match[0]
+        proof = merkle_proofs_by_wallet.get(w['address'], {}).get(selected_tier['name'])
+        mint_result = do_mint(contract, chain, tier_for_wallet, custom_rpc, quantity,
+                              w, dry_run, currency, gas_params, proof)
+        if mint_result is None:
+            # User cancelled countdown
             break
 
     show_batch_summary()

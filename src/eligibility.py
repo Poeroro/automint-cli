@@ -57,12 +57,24 @@ def check_eligibility(contract: str, chain: str, wallet: str, tiers: list,
         method_sig = tier.get('methodSig', '')
         status = tier.get('status', 'unknown')
         requires_merkle = tier.get('requiresMerkle', False) or method_sig in MERKLE_SIGS
+        is_scheduled = status.startswith('scheduled:')
 
         eligible = False
         reasons = []
 
+        # ── Scheduled tier: only check balance, skip on-chain simulation ──
+        # The contract will reject eth_call before the start time, so we cannot
+        # simulate. Instead we trust the balance check and queue the wallet for
+        # the countdown. The actual on-chain check happens at mint time.
+        if is_scheduled:
+            if price == 0 or eth_balance >= price:
+                eligible = True
+                reasons.append('scheduled — balance ready')
+            else:
+                reasons.append(f'scheduled — insufficient: {eth_balance:.4f} < {price}')
+
         # ── Merkle allowlist tier ──
-        if requires_merkle:
+        elif requires_merkle:
             proof = (merkle_proofs or {}).get(name, [])
             if not proof:
                 reasons.append('merkle proof required — set MERKLE_PROOF in .env')
@@ -110,7 +122,7 @@ def check_eligibility(contract: str, chain: str, wallet: str, tiers: list,
                     pass
 
         # ── Public paid tier ──
-        if not eligible and 'public' in name.lower():
+        if not eligible and not is_scheduled and 'public' in name.lower():
             if eth_balance >= price:
                 eligible = True
                 reasons.append(f'balance: {eth_balance:.4f} >= {price}')
