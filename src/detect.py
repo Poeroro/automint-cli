@@ -61,8 +61,17 @@ SCHEDULE_SELECTORS = {
     ],
 }
 
-# SeaDrop v1 contract address (same across all EVM chains)
-SEADROP_V1 = '0x00005EA00Ac477B1030CE78506496e8C2dE24bf5'
+# SeaDrop contract addresses per chain
+# Same address on most EVM chains, but MegaETH has its own deployment
+SEADROP_BY_CHAIN: dict[str, str] = {
+    'ethereum': '0x00005EA00Ac477B1030CE78506496e8C2dE24bf5',
+    'base':     '0x00005EA00Ac477B1030CE78506496e8C2dE24bf5',
+    'optimism': '0x00005EA00Ac477B1030CE78506496e8C2dE24bf5',
+    'arbitrum': '0x00005EA00Ac477B1030CE78506496e8C2dE24bf5',
+    'polygon':  '0x00005EA00Ac477B1030CE78506496e8C2dE24bf5',
+    'bsc':      '0x00005EA00Ac477B1030CE78506496e8C2dE24bf5',
+    'megaeth':  '0x00005Ea12886e54be34E2cc57D095c25e492f8CA',
+}
 # Selector: getPublicDrop(address nftContract) on SeaDrop contract
 _SEADROP_GET_PUBLIC_DROP = '0xbc6a629c'
 # Selector: getAllowedSeaDrop() on NFT contract — indicates SeaDrop v1
@@ -196,6 +205,7 @@ def scrape_opensea_collection(slug: str) -> dict:
         'arbitrum': 'arbitrum', 'arb': 'arbitrum',
         'polygon': 'polygon', 'matic': 'polygon',
         'bsc': 'bsc', 'bnb': 'bsc',
+        'megaeth': 'megaeth', 'mega': 'megaeth',
         'sepolia': 'ethereum',
     }
     chain = chain_map.get(contract_chain.lower(), 'ethereum')
@@ -279,7 +289,7 @@ def _resolve_implementation(w3: Web3, contract: str) -> str:
     return contract
 
 
-def _detect_seadrop(w3: Web3, contract: str) -> dict | None:
+def _detect_seadrop(w3: Web3, contract: str, chain: str = 'ethereum') -> dict | None:
     """Detect SeaDrop v1 drop info for an NFT contract.
 
     Returns a tier dict if the contract uses SeaDrop v1, else None.
@@ -287,7 +297,8 @@ def _detect_seadrop(w3: Web3, contract: str) -> dict | None:
     contract, not directly to the NFT contract.
     """
     try:
-        seadrop = Web3.to_checksum_address(SEADROP_V1)
+        seadrop_addr = SEADROP_BY_CHAIN.get(chain, SEADROP_BY_CHAIN['ethereum'])
+        seadrop = Web3.to_checksum_address(seadrop_addr)
         # getPublicDrop(address nftContract)
         calldata = _SEADROP_GET_PUBLIC_DROP + '000000000000000000000000' + contract[2:].lower()
         resp = w3.eth.call({'to': seadrop, 'data': calldata})
@@ -320,7 +331,7 @@ def _detect_seadrop(w3: Web3, contract: str) -> dict | None:
             'price': mint_price_wei / 1e18,
             # SeaDrop: mint is sent TO the SeaDrop contract, not the NFT contract
             'methodSig': '0x161e2100',  # mintPublic (called on SeaDrop)
-            'mintTarget': SEADROP_V1,   # override: tx goes here
+            'mintTarget': seadrop_addr,  # override: tx goes here
             'status': status,
             'maxMint': max_per_wallet,
             'requiresMerkle': False,
@@ -462,7 +473,7 @@ def detect_onchain(contract: str, chain: str, custom_rpc: str = '') -> dict:
     detected = []
 
     # 1. SeaDrop v1 protocol check (OpenSea native launchpad)
-    seadrop_tier = _detect_seadrop(w3, contract)
+    seadrop_tier = _detect_seadrop(w3, contract, chain)
     if seadrop_tier:
         detected.append(seadrop_tier)
         # Override price from SeaDrop if standard selectors found nothing

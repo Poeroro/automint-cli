@@ -24,10 +24,15 @@ CHAINS = {
     'arbitrum': {'id': 42161, 'rpc': 'https://arb1.arbitrum.io/rpc',          'currency': 'ETH',  'explorer': 'arbiscan.io'},
     'polygon':  {'id': 137,   'rpc': 'https://polygon-bor.publicnode.com',    'currency': 'MATIC','explorer': 'polygonscan.com'},
     'bsc':      {'id': 56,    'rpc': 'https://bsc-dataseed.binance.org',      'currency': 'BNB',  'explorer': 'bscscan.com'},
+    'megaeth':  {'id': 4326,  'rpc': 'https://megaeth.drpc.org',              'currency': 'ETH',  'explorer': 'megaeth.blockscout.com'},
 }
 
 # Fallback RPC list per chain — tried in order if primary fails
 RPC_FALLBACKS = {
+    'megaeth': [
+        'https://megaeth.drpc.org',
+        'https://6342.rpc.thirdweb.com',
+    ],
     'ethereum': [
         'https://ethereum.publicnode.com',
         'https://rpc.ankr.com/eth',
@@ -69,6 +74,7 @@ CHAIN_MAP = {
     'arbitrum': 'arbitrum', 'arb': 'arbitrum',
     'polygon': 'polygon',   'matic': 'polygon',
     'bsc': 'bsc',           'binance': 'bsc',
+    'megaeth': 'megaeth',   'mega': 'megaeth',
 }
 
 

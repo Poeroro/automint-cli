@@ -23,8 +23,8 @@ def check(name, cond, detail=""):
         errors += 1
 
 # ── CHAINS ──
-check("CHAINS: 6 entries", len(CHAINS) == 6)
-for k in ['ethereum', 'base', 'optimism', 'arbitrum', 'polygon', 'bsc']:
+check("CHAINS: 7 entries", len(CHAINS) == 7)
+for k in ['ethereum', 'base', 'optimism', 'arbitrum', 'polygon', 'bsc', 'megaeth']:
     check(f"CHAINS[{k}]: has id",       'id'       in CHAINS[k])
     check(f"CHAINS[{k}]: has rpc",      'rpc'      in CHAINS[k])
     check(f"CHAINS[{k}]: has currency", 'currency' in CHAINS[k])
@@ -36,6 +36,7 @@ check("optimism id=10",      CHAINS['optimism']['id'] == 10)
 check("arbitrum id=42161",   CHAINS['arbitrum']['id'] == 42161)
 check("polygon  id=137",     CHAINS['polygon']['id'] == 137)
 check("bsc      id=56",      CHAINS['bsc']['id'] == 56)
+check("megaeth  id=4326",    CHAINS['megaeth']['id'] == 4326)
 
 check("polygon  currency=MATIC", CHAINS['polygon']['currency'] == 'MATIC')
 check("bsc      currency=BNB",   CHAINS['bsc']['currency'] == 'BNB')
@@ -60,6 +61,8 @@ check("resolve_chain('eth')",        resolve_chain('eth')       == 'ethereum')
 check("resolve_chain('ETH')",        resolve_chain('ETH')       == 'ethereum')
 check("resolve_chain('  eth  ')",    resolve_chain('  eth  ')   == 'ethereum')
 check("resolve_chain('polygon')",    resolve_chain('polygon')   == 'polygon')
+check("resolve_chain('megaeth')",    resolve_chain('megaeth')   == 'megaeth')
+check("resolve_chain('mega')",       resolve_chain('mega')      == 'megaeth')
 check("resolve_chain('invalid')=None", resolve_chain('invalid') is None)
 check("resolve_chain('')=None",        resolve_chain('')         is None)
 
