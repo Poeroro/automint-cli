@@ -1,161 +1,251 @@
 # ✦ AutoMint CLI
 
-**NFT Minter Terminal** — paste OpenSea URL atau contract address, auto-detect tiers, cek eligibility kamu, countdown ke jadwal buka, eksekusi mint otomatis pake private key.
-
-Gak perlu ribet. Tinggal `automint` → paste URL → enter → selesai.
+> NFT Minter Terminal — paste URL OpenSea, auto-detect tier, cek eligibility, countdown ke jadwal buka, eksekusi mint otomatis.
 
 ---
 
 ## Daftar Isi
 
+- [Cara Kerja](#cara-kerja)
 - [Persyaratan](#persyaratan)
-- [Install](#install)
-- [Setup `.env`](#setup-env)
-- [Pasang Command](#pasang-command)
+- [Instalasi](#instalasi)
+  - [Windows](#windows)
+  - [Linux / macOS](#linux--macos)
+- [Konfigurasi](#konfigurasi)
+  - [Wajib — Private Key](#wajib--private-key)
+  - [Opsional — RPC, Gas, Notifikasi, dll](#opsional)
 - [Cara Pakai](#cara-pakai)
-  - [Mode Interaktif (paling gampang)](#1-mode-interaktif-paling-gampang)
-  - [Mode Langsung (pake argumen)](#2-mode-langsung-pake-argumen)
-  - [Dry-Run (coba dulu, gak ngirim tx)](#3-dry-run-coba-dulu-gak-ngirim-tx)
-  - [Contract Langsung (gak perlu OS API Key)](#4-contract-langsung-gak-perlu-os-api-key)
-  - [Chain Lain / Custom RPC](#5-chain-lain--custom-rpc)
-- [Yang Terjadi Setelah Detect](#yang-terjadi-setelah-detect)
-  - [Kalo Tier Masih Scheduled](#kalo-tier-masih-scheduled)
-  - [Kalo Tier Udah Live](#kalo-tier-udah-live)
-  - [Kalo Ada 2+ Tier Eligible](#kalo-ada-2-tier-eligible)
-  - [Kalo Gak Eligible](#kalo-gak-eligible)
-- [Hasil Mint](#hasil-mint)
-- [Chain Support](#chain-support)
-- [CLI Arguments](#cli-arguments)
+  - [1. Mode Interaktif](#1-mode-interaktif)
+  - [2. Langsung via Argumen](#2-langsung-via-argumen)
+  - [3. Dry-Run (coba dulu)](#3-dry-run-coba-dulu)
+  - [4. Contract Address Langsung](#4-contract-address-langsung)
+  - [5. Watch Mode (auto-mint saat tier live)](#5-watch-mode)
+  - [6. Batch Multi-Wallet](#6-batch-multi-wallet)
+- [Alur Setelah Detect](#alur-setelah-detect)
+- [Chain yang Didukung](#chain-yang-didukung)
+- [Semua Argumen CLI](#semua-argumen-cli)
+- [Fitur Lanjutan](#fitur-lanjutan)
+- [Log Mint](#log-mint)
 - [Struktur Project](#struktur-project)
-- [Log](#log)
-- [Peringatan Keamanan](#peringatan-keamanan)
+- [Keamanan](#keamanan)
 - [Troubleshooting](#troubleshooting)
+
+---
+
+## Cara Kerja
+
+```
+URL / Contract Address
+        ↓
+  Detect on-chain          ← tiers, harga, jadwal, chain
+        ↓
+  Cek eligibility          ← whitelist, merkle proof, balance
+        ↓
+  Pilih tier + quantity
+        ↓
+  Countdown (jika scheduled) → eksekusi saat 0
+        ↓
+  Kirim tx → tunggu receipt → laporan + notifikasi
+```
 
 ---
 
 ## Persyaratan
 
-| Barang | Keterangan |
-|--|--|
-| Python | 3.10+ |
-| Wallet | Ethereum wallet dengan private key. **Buat wallet khusus** AutoMint, jangan wallet utama! |
-| Internet | Koneksi ke RPC publik |
+| Kebutuhan | Detail |
+|-----------|--------|
+| **Python** | 3.10 atau lebih baru |
+| **Git** | Untuk clone repo |
+| **Wallet** | Private key wallet Ethereum — **buat wallet khusus, jangan pakai wallet utama!** |
+| **Internet** | Koneksi ke RPC publik |
 
 ---
 
-## Install
+## Instalasi
 
-```bash
-# Clone repo — HTTPS recommended (gak perlu setup SSH)
+### Windows
+
+Buka **Command Prompt** atau **PowerShell**, jalankan perintah berikut satu per satu:
+
+**1. Clone repository**
+```cmd
 git clone https://github.com/Poeroro/automint-cli.git
-# Atau SSH kalo udah setup key
-# git clone git@github.com:Poeroro/automint-cli.git
 cd automint-cli
+```
 
-# Buat virtual environment
-# Windows: python -m venv venv
-# Linux/Mac: python3 -m venv venv
+**2. Buat virtual environment**
+```cmd
 python -m venv venv
+```
 
-# Aktifkan
-# Windows: venv\Scripts\activate
-# Linux/Mac: source venv/bin/activate
+**3. Aktifkan virtual environment**
+```cmd
 venv\Scripts\activate
+```
+> Kalau berhasil, muncul `(venv)` di awal baris terminal.
 
-# Install semua dependency
-python -m pip install -r requirements.txt
+**4. Install dependency**
+```cmd
+pip install -r requirements.txt
 ```
 
-## Setup `.env`
-
-```bash
-# Linux/Mac: copy template
-cp .env.example .env
-
-# Windows: copy template
+**5. Siapkan file konfigurasi**
+```cmd
 copy .env.example .env
-
-# Lalu edit .env:
-# Linux/Mac: nano .env  atau  vim .env
-# Windows: notepad .env  atau  code .env
+notepad .env
 ```
 
-Isi file `.env`:
+Isi `PRIVATE_KEY` di Notepad, simpan, tutup. Lanjut ke bagian [Konfigurasi](#konfigurasi).
 
-```env
-# ─── WAJIB ───
-PRIVATE_KEY=0x1234...  # Private key wallet khusus kamu
+---
 
-# ─── OPSIONAL: Custom RPC per Chain ───
-# Biarkan kosong kalo mau pake RPC default (PublicNode untuk ETH)
-# RPC_ETH=https://eth-mainnet.g.alchemy.com/v2/xxx
-# RPC_BASE=https://base-mainnet.g.alchemy.com/v2/xxx
-# RPC_OP=https://optimism-mainnet.g.alchemy.com/v2/xxx
-# RPC_ARB=https://arbitrum-mainnet.g.alchemy.com/v2/xxx
-# RPC_POLYGON=https://polygon-mainnet.g.alchemy.com/v2/xxx
-# RPC_BSC=https://bsc-mainnet.g.alchemy.com/v2/xxx
-```
+### Linux / macOS
 
-**Wajib:** kunci file `.env` biar gak kebaca orang lain:
+Buka **Terminal**, jalankan perintah berikut:
 
+**1. Clone repository**
 ```bash
-# Linux/Mac
+git clone https://github.com/Poeroro/automint-cli.git
+cd automint-cli
+```
+
+**2. Buat virtual environment**
+```bash
+python3 -m venv venv
+```
+
+**3. Aktifkan virtual environment**
+```bash
+source venv/bin/activate
+```
+> Kalau berhasil, muncul `(venv)` di awal baris terminal.
+
+**4. Install dependency**
+```bash
+pip install -r requirements.txt
+```
+
+**5. Siapkan file konfigurasi**
+```bash
+cp .env.example .env
+nano .env
+```
+
+Isi `PRIVATE_KEY`, tekan `Ctrl+O` → Enter untuk simpan, `Ctrl+X` untuk keluar.
+
+**6. Kunci file konfigurasi** _(wajib di Linux/macOS)_
+```bash
 chmod 600 .env
-
-# Windows — gak perlu chmod (NTFS permission beda sistem).
-# Cukup pastikan file gak di-share publik.
 ```
 
-> CLI otomatis ngecek permission `.env` (Linux/Mac). Kalo terlalu terbuka (＞600), bakal muncul warning merah dan minta konfirmasi. Windows skip check ini karena NTFS beda sistem permission.
+**7. (Opsional) Pasang shortcut `automint`**
 
-## Pasang Command
-
-Supaya tinggal ketik `automint` dari mana aja:
+Supaya bisa ketik `automint` dari mana saja tanpa `python automint.py`:
 
 ```bash
-# ─── Linux/Mac ───
-sudo tee /usr/local/bin/automint > /dev/null << 'SCRIPT'
+# Ganti /path/ke/automint-cli dengan lokasi folder kamu
+sudo tee /usr/local/bin/automint > /dev/null << 'EOF'
 #!/bin/bash
 cd /path/ke/automint-cli
-if [ -f "venv/bin/python3" ]; then
-    exec venv/bin/python3 automint.py "$@"
-elif [ -f ".venv/bin/python3" ]; then
-    exec .venv/bin/python3 automint.py "$@"
-else
-    exec python3 automint.py "$@"
-fi
-SCRIPT
-sudo chmod +x /usr/local/bin/automint
-# Ganti /path/ke/automint-cli dengan directory project kamu
+source venv/bin/activate
+exec python automint.py "$@"
+EOF
 
-# ─── Windows (PowerShell) ───
-# Bikin automint.cmd di folder project:
-#   @echo off
-#   python venv\Scripts\python.exe automint.py %*
-# Lalu tambah folder project ke PATH, atau jalankan pake:
-#   venv\Scripts\python automint.py [args]
+sudo chmod +x /usr/local/bin/automint
 ```
 
-Selesai. Sekarang tinggal `automint` enter (Linux/Mac) atau `python automint.py` (Windows).
+---
+
+## Konfigurasi
+
+Semua konfigurasi ada di file `.env` di folder project.
+
+### Wajib — Private Key
+
+```env
+PRIVATE_KEY=0xabc123...
+```
+
+> **Penting:** Gunakan wallet khusus AutoMint. Jangan pernah pakai wallet utama yang menyimpan aset besar.
+
+Untuk **lebih dari satu wallet**, gunakan `PRIVATE_KEYS` (pisah koma):
+```env
+PRIVATE_KEYS=0xabc...,0xdef...,0x123...
+```
+
+---
+
+### Opsional
+
+Semua pengaturan di bawah ini **tidak wajib**. Biarkan kosong untuk menggunakan nilai default.
+
+#### OpenSea API Key
+```env
+# Daftar gratis di: https://docs.opensea.io/reference/api-keys
+# Tanpa key: limit 16 request/window. Kalau kena error 401/429, set ini.
+OPENSEA_API_KEY=your_key_here
+```
+
+#### Custom RPC per Chain
+```env
+# Default sudah pakai endpoint publik (PublicNode, dll).
+# Isi ini kalau mau pakai Alchemy / Infura untuk lebih stabil.
+RPC_ETH=https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY
+RPC_BASE=https://base-mainnet.g.alchemy.com/v2/YOUR_KEY
+RPC_OP=https://optimism-mainnet.g.alchemy.com/v2/YOUR_KEY
+RPC_ARB=https://arbitrum-mainnet.g.alchemy.com/v2/YOUR_KEY
+RPC_POLYGON=https://polygon-mainnet.g.alchemy.com/v2/YOUR_KEY
+RPC_BSC=https://bsc-mainnet.g.alchemy.com/v2/YOUR_KEY
+```
+
+#### Gas Guard
+```env
+# Kalau gas price melebihi batas ini, mint otomatis dibatalkan.
+MAX_GAS_GWEI=50
+```
+
+#### Merkle Proof (untuk Allowlist contract)
+```env
+# Biasanya di-fetch otomatis. Isi manual kalau auto-fetch gagal.
+MERKLE_PROOF=0xabc...,0xdef...
+```
+
+#### Notifikasi Telegram
+```env
+# Buat bot via @BotFather di Telegram, ambil token + chat ID.
+TELEGRAM_BOT_TOKEN=1234567890:AAxxxxxx
+TELEGRAM_CHAT_ID=123456789
+```
+
+#### Notifikasi Discord
+```env
+# Di server Discord: Settings → Integrations → Webhooks → Copy URL
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+```
 
 ---
 
 ## Cara Pakai
 
-### 1. Mode Interaktif (paling gampang)
+### 1. Mode Interaktif
 
-Cukup ketik:
+Cara paling mudah — jalankan tanpa argumen, ikuti instruksi yang muncul.
 
-```bash
-# Linux/Mac:
-automint
-
-# Windows:
+**Windows:**
+```cmd
 python automint.py
 ```
 
-Nanti muncul:
+**Linux / macOS:**
+```bash
+# Kalau sudah pasang shortcut:
+automint
 
+# Kalau belum:
+python automint.py
+```
+
+Yang muncul di layar:
 ```
 ╭──────────────────────────────────────────╮
 │  ✦ AutoMint CLI  —  NFT Minter Terminal  │
@@ -166,110 +256,145 @@ Target NFT
 >
 ```
 
-**Yang lo lakukan:**
-1. Paste URL OpenSea (misal `https://opensea.io/collection/pudgy-penguins`) — enter
-2. Atau paste contract address (`0xbd3531da5cf5857e7cfaa92426877b022e612cf8`) — enter
-3. Ketik `y` kalo mau dry-run dulu (cek doang, gak ngirim tx), enter kalo mau mint beneran
-
-```
-Dry-run only? (cek doang, gak mint) [y/N] > y
-```
-
-Selesai. CLI otomatis:
-- Chain + tiers + price + jadwal detect
-- Cek eligibility wallet kamu
-- Estimasi biaya
-
-### 2. Mode Langsung (pake argumen)
-
-Kalo udah tau mau mint apa, langsung kasih argumen:
-
-```bash
-# Linux/Mac:
-automint --url https://opensea.io/collection/pudgy-penguins
-automint --contract 0xbd3531da5cf5857e7cfaa92426877b022e612cf8
-
-# Windows:
-python automint.py --url https://opensea.io/collection/pudgy-penguins
-python automint.py --contract 0xbd3531da5cf5857e7cfaa92426877b022e612cf8
-```
-
-### 3. Dry-Run (coba dulu, gak ngirim tx)
-
-Pake `--dry-run` kalo mau cek dulu tanpa beneran mint:
-
-```bash
-# Linux/Mac:
-automint --url https://opensea.io/collection/pudgy-penguins --dry-run
-automint --contract 0xbd3531da5cf5857e7cfaa92426877b022e612cf8 --dry-run
-
-# Windows:
-python automint.py --url https://opensea.io/collection/pudgy-penguins --dry-run
-python automint.py --contract 0xbd3531da5cf5857e7cfaa92426877b022e612cf8 --dry-run
-```
-
-Dry-run bakal:
-1. Detect contract + chain + tiers + price + jadwal
-2. Load wallet dari `.env`
-3. Cek eligibility tiap tier
-4. Estimasi gas + total cost
-5. **Tidak ada tx yang dikirim** — aman buat testing
-
-### 4. Contract Langsung
-
-Kalo punya contract address, tinggal pake langsung:
-
-```bash
-# Linux/Mac:
-automint --contract 0xbd3531da5cf5857e7cfaa92426877b022e612cf8 --dry-run
-
-# Windows:
-python automint.py --contract 0xbd3531da5cf5857e7cfaa92426877b022e612cf8 --dry-run
-```
-
-Wajib pake `--chain` kalo contract address. Contoh: `--contract 0x... --chain base`.
-
-### 5. Chain Lain / Custom RPC
-
-Kalo mau paksa chain tertentu:
-
-```bash
-# Linux/Mac:
-automint --contract 0x... --chain base
-automint --url https://opensea.io/collection/... --chain polygon
-automint --url ... --rpc https://eth-mainnet.g.alchemy.com/v2/xxx
-
-# Windows:
-python automint.py --contract 0x... --chain base
-python automint.py --url https://opensea.io/collection/... --chain polygon
-python automint.py --url ... --rpc https://eth-mainnet.g.alchemy.com/v2/xxx
-```
-
-Alias chain: `eth`, `base`, `op` / `optimism`, `arb` / `arbitrum`, `matic` / `polygon`, `bsc`.
-
-Kalo pake custom RPC, CLI verifikasi chainId. Kalo gak cocok — warning + abort. Dana lo aman.
+**Langkah:**
+1. Paste URL OpenSea → Enter
+2. Ketik `y` untuk dry-run (cek tanpa mint), atau langsung Enter untuk mint
 
 ---
 
-## Yang Terjadi Setelah Detect
+### 2. Langsung via Argumen
 
-### Kalo Tier Masih Scheduled
+**Windows:**
+```cmd
+python automint.py --url https://opensea.io/collection/nama-koleksi
+python automint.py --contract 0xABC... --chain eth
+```
+
+**Linux / macOS:**
+```bash
+automint --url https://opensea.io/collection/nama-koleksi
+automint --contract 0xABC... --chain eth
+```
+
+---
+
+### 3. Dry-Run (coba dulu)
+
+Deteksi + estimasi biaya tanpa mengirim transaksi. **Selalu jalankan ini dulu** sebelum mint beneran.
+
+**Windows:**
+```cmd
+python automint.py --url https://opensea.io/collection/nama-koleksi --dry-run
+python automint.py --contract 0xABC... --chain eth --dry-run
+```
+
+**Linux / macOS:**
+```bash
+automint --url https://opensea.io/collection/nama-koleksi --dry-run
+automint --contract 0xABC... --chain eth --dry-run
+```
+
+Dry-run akan:
+- Detect chain, tier, harga, jadwal
+- Cek eligibility wallet
+- Estimasi gas dan total biaya
+- **Tidak mengirim transaksi apapun**
+
+---
+
+### 4. Contract Address Langsung
+
+Kalau sudah punya contract address, bisa langsung pakai tanpa OpenSea.
+`--chain` **wajib** diisi kalau pakai contract address.
+
+**Windows:**
+```cmd
+python automint.py --contract 0xABC... --chain eth
+python automint.py --contract 0xABC... --chain base --dry-run
+```
+
+**Linux / macOS:**
+```bash
+automint --contract 0xABC... --chain eth
+automint --contract 0xABC... --chain base --dry-run
+```
+
+Alias chain yang tersedia: `eth`, `base`, `op`, `arb`, `matic`, `bsc`
+
+---
+
+### 5. Watch Mode
+
+Poll contract secara otomatis tiap N detik. Begitu ada tier yang live, langsung auto-mint — tidak perlu pantau manual.
+
+**Windows:**
+```cmd
+:: Poll tiap 15 detik (default)
+python automint.py --url https://opensea.io/collection/... --watch
+
+:: Poll tiap 30 detik
+python automint.py --url https://opensea.io/collection/... --watch --watch-interval 30
+```
+
+**Linux / macOS:**
+```bash
+# Poll tiap 15 detik (default)
+automint --url https://opensea.io/collection/... --watch
+
+# Poll tiap 30 detik
+automint --url https://opensea.io/collection/... --watch --watch-interval 30
+```
+
+- Tekan `Ctrl+C` kapan saja untuk berhenti
+- Notifikasi Telegram/Discord dikirim saat tier live (kalau dikonfigurasi)
+- Kalau `MAX_GAS_GWEI` di-set, CLI tunggu gas turun dulu sebelum mint
+
+---
+
+### 6. Batch Multi-Wallet
+
+Mint dengan semua wallet sekaligus menggunakan `--wallet all`.
+Pastikan `PRIVATE_KEYS` sudah diisi di `.env`.
+
+**Windows:**
+```cmd
+python automint.py --url https://opensea.io/collection/... --wallet all
+python automint.py --url https://opensea.io/collection/... --wallet all --dry-run
+```
+
+**Linux / macOS:**
+```bash
+automint --url https://opensea.io/collection/... --wallet all
+automint --url https://opensea.io/collection/... --wallet all --dry-run
+```
+
+Pilih wallet tertentu dengan index:
+```
+--wallet 0    ← wallet pertama
+--wallet 1    ← wallet kedua
+--wallet all  ← semua wallet sekaligus
+```
+
+---
+
+## Alur Setelah Detect
+
+### Tier Masih Terjadwal
 
 ```
-⏳ Countdown: Allowlist opens at 2026-06-27 14:00:00 UTC
-Auto-mint with selected gas at countdown end...
-⏱  02:34:17  ████████░░░░░░░░░░░░
+⏳ Countdown: Allowlist opens at 2026-07-01 14:00:00 UTC
+Auto-mint at countdown end...
+   ⏱  02:34:17  [████████░░░░░░░░░░░░]
    [Press Ctrl+C to cancel]
 ```
 
-Pilih gas setelah quantity → CLI otomatis countdown → execute pas 0. `Ctrl+C` selama countdown kalo cancel.
+CLI otomatis countdown dan mint saat angka menyentuh 0. Tekan `Ctrl+C` untuk batal.
 
-### Kalo Tier Udah Live
+### Tier Sudah Live
 
 ```
 💰 Estimating cost...
 
-Cost Estimate:
   Mint Price:  0.003000 ETH
   Gas Units:   120,000
   Gas Price:   5.23 Gwei
@@ -279,115 +404,169 @@ Cost Estimate:
 ✅ Balance sufficient (0.050000 >= 0.003627)
 
 🔥 Gas Price Selection
-  [0] 🐢 Low    (1.0 Gwei)
-  [1] 🚶 Medium (3.0 Gwei)     ← default
-  [2] 🚀 High   (10.0 Gwei)
-  [3] ⚙️ Custom
+  [0] 🐢 Low     (1.0 Gwei)   ~36s
+  [1] 🚶 Medium  (3.0 Gwei)   ~12s   ← default
+  [2] 🚀 High    (10.0 Gwei)  ~6s
+  [3] ⚙️  Custom
 
-Allowlist is LIVE — auto-minting...
-🚀 executing...
+Select gas [0-3, default=1] >
 ```
 
-Pilih gas → langsung auto-mint.
+Pilih opsi gas → mint langsung dieksekusi.
 
-### Kalo Ada 2+ Tier Eligible
+### Ada 2+ Tier Eligible
 
 ```
 Select tier:
   1. Allowlist (0.003 ETH)
-  2. Public (0.005 ETH)
-> 1
+  2. Public    (0.005 ETH)
+> 
 ```
 
-Tinggal ketik nomor. Kalo cuma 1 eligible → auto-select langsung, gak perlu milih.
+Ketik nomor tier yang diinginkan. Kalau hanya 1 tier eligible, auto-select.
 
-### Kalo Gak Eligible
+### Tidak Eligible
 
 ```
-┌───┬────────────┬────────┬──────────┬──────────────────────────┐
-│ # │ Tier       │ Price  │ Eligible │ Reason                   │
-├───┼────────────┼────────┼──────────┼──────────────────────────┤
-│ 1 │ Team       │ FREE   │ ❌ NO    │ not whitelisted          │
-│ 2 │ Allowlist  │ 0.003  │ ❌ NO    │ insufficient: 0.01 < 0.003│
-│ 3 │ Public     │ 0.005  │ ❌ NO    │ insufficient: 0.01 < 0.005│
-└───┴────────────┴────────┴──────────┴──────────────────────────┘
+┌───┬───────────┬───────┬──────────┬──────────────────────────────┐
+│ # │ Tier      │ Price │ Eligible │ Reason                       │
+├───┼───────────┼───────┼──────────┼──────────────────────────────┤
+│ 1 │ Team      │ FREE  │ ❌ NO    │ not whitelisted              │
+│ 2 │ Allowlist │ 0.003 │ ❌ NO    │ insufficient: 0.01 < 0.003   │
+│ 3 │ Public    │ 0.005 │ ❌ NO    │ insufficient: 0.01 < 0.005   │
+└───┴───────────┴───────┴──────────┴──────────────────────────────┘
 
 ✕ Wallet not eligible for any tier
 ```
 
-Top up wallet atau cari NFT lain.
+Top up wallet atau cari koleksi lain.
+
+### Hasil Mint
+
+**Sukses:**
+```
+╭──────────────────────────────────────────╮
+│  ✅ MINT SUCCESS                          │
+│                                          │
+│  Tx:      0xabc123...def456              │
+│  Block:   21,543,201                     │
+│  Gas:     85,432 units @ 5.23 Gwei       │
+│  Gas Fee: 0.000447 ETH                   │
+│  Total:   0.003447 ETH                   │
+╰──────────────────────────────────────────╯
+   Explorer: https://etherscan.io/tx/0xabc...
+```
+
+**Gagal:**
+```
+╭────────────────────────────────────╮
+│  ❌ MINT FAILED                     │
+│                                    │
+│  Tx:     0xabc123...               │
+│  Error:  Transaction reverted      │
+╰────────────────────────────────────╯
+```
 
 ---
 
-## Hasil Mint
+## Chain yang Didukung
 
-Kalo sukses:
+| Chain | Alias | Chain ID | Currency | Explorer |
+|-------|-------|----------|----------|----------|
+| Ethereum | `eth` | 1 | ETH | etherscan.io |
+| Base | `base` | 8453 | ETH | basescan.org |
+| Optimism | `op` | 10 | ETH | optimistic.etherscan.io |
+| Arbitrum | `arb` | 42161 | ETH | arbiscan.io |
+| Polygon | `matic` | 137 | MATIC | polygonscan.com |
+| BSC | `bsc` | 56 | BNB | bscscan.com |
 
-```
-╭──────────────────────────────────────╮
-│          ✅ MINT SUCCESS              │
-│                                      │
-│ Tx:      0xabc123...def456           │
-│ Block:   21,543,201                  │
-│ Gas:     85,432 units @ 5.23 Gwei   │
-│ Gas Fee: 0.000447 ETH               │
-│ Total:   0.003447 ETH               │
-╰──────────────────────────────────────╯
-```
+Setiap chain punya **3–4 fallback RPC otomatis**. Kalau endpoint utama down, CLI langsung pindah ke yang berikutnya tanpa perlu setup manual.
 
-Tx hash bisa lo klik (link explorer). Buka di browser buat cek status.
-
-Kalo gagal:
-
-```
-╭────────────────────────────────╮
-│        ❌ MINT FAILED           │
-│                                │
-│ Tx:     0xabc123...            │
-│ Error:  Transaction reverted   │
-╰────────────────────────────────╯
-```
-
-Kemungkinan: udah mint duluan, gak eligible pas eksekusi, atau contract error.
+Prioritas RPC: `--rpc` (CLI) › `RPC_CHAIN` (`.env`) › endpoint publik default
 
 ---
 
-## Chain Support
+## Semua Argumen CLI
 
-| Chain | Chain ID | Currency | RPC Default | Explorer |
-|---|---|---|---|---|
-| Ethereum `eth` | 1 | ETH | `ethereum.publicnode.com` | etherscan.io |
-| Base `base` | 8453 | ETH | `base-rpc.publicnode.com` | basescan.org |
-| Optimism `op` | 10 | ETH | `mainnet.optimism.io` | optimistic.etherscan.io |
-| Arbitrum `arb` | 42161 | ETH | `arb1.arbitrum.io/rpc` | arbiscan.io |
-| Polygon `matic` | 137 | MATIC | `polygon-bor.publicnode.com` | polygonscan.com |
-| BSC `bsc` | 56 | BNB | `bsc-dataseed.binance.org` | bscscan.com |
+```
+python automint.py [--url URL] [--contract ADDR] [--chain CHAIN]
+                   [--rpc URL] [--wallet N|all] [--dry-run]
+                   [--watch] [--watch-interval SEC]
+```
 
-Priority RPC: `--rpc` CLI > `RPC_CHAIN` di `.env` > public default (tabel atas)
+| Argumen | Default | Keterangan |
+|---------|---------|------------|
+| `--url URL` | — | URL koleksi OpenSea |
+| `--contract ADDR` | — | Contract address langsung (`0x...`) |
+| `--chain CHAIN` | `ethereum` | Chain target. **Wajib** kalau pakai `--contract` |
+| `--rpc URL` | — | Custom RPC. Override env dan default |
+| `--wallet N` atau `all` | auto | Index wallet spesifik, atau `all` untuk batch |
+| `--dry-run` | off | Deteksi + estimasi saja, tidak kirim transaksi |
+| `--watch` | off | Poll terus sampai tier live, lalu auto-mint |
+| `--watch-interval SEC` | `15` | Jeda antar poll dalam detik (watch mode) |
+| `--help` | — | Tampilkan bantuan |
 
 ---
 
-## CLI Arguments
+## Fitur Lanjutan
 
+### RPC Fallback Otomatis
+Kalau RPC utama gagal atau timeout, CLI otomatis coba endpoint cadangan (Ankr, LlamaRPC, dll). Tidak perlu setup manual.
+
+### Gas Guard
+Lindungi diri dari mint saat gas sedang mahal. Set batas di `.env`:
+```env
+MAX_GAS_GWEI=50
+```
+Kalau gas aktual melebihi batas, transaksi dibatalkan sebelum dikirim. Di watch mode, CLI menunggu gas turun dulu sebelum eksekusi.
+
+### Sold-Out & Paused Check
+Sebelum kirim transaksi, CLI cek on-chain apakah contract sudah sold-out atau di-pause. Mencegah gas terbuang sia-sia dari transaksi yang pasti gagal.
+
+### Gas Bump Otomatis
+Kalau transaksi stuck lebih dari 45 detik (belum masuk blok), CLI otomatis kirim ulang dengan gas 15% lebih tinggi (replace-by-fee). Maksimal 3 kali percobaan.
+
+### Merkle Proof (Allowlist)
+Contract modern pakai Merkle tree untuk allowlist. CLI auto-fetch proof dari Highlight.xyz / Manifold API. Kalau gagal otomatis, isi manual di `.env`:
+```env
+MERKLE_PROOF=0xabc...,0xdef...
+```
+
+### Notifikasi
+Terima notifikasi setiap mint selesai — sukses, gagal, atau pending. Setup di `.env`:
+```env
+TELEGRAM_BOT_TOKEN=...
+TELEGRAM_CHAT_ID=...
+DISCORD_WEBHOOK_URL=...
+```
+
+---
+
+## Log Mint
+
+Semua hasil mint tersimpan otomatis di `automint.log` (format JSON per baris):
+
+```json
+{"timestamp": "2026-07-01 14:00:00 UTC", "wallet": "0xabc...", "chain": "ethereum", "contract": "0xbd35...", "tier": "Public", "price": 0.005, "quantity": 1, "status": "success", "tx_hash": "0xabc123..."}
+```
+
+**Cara baca log:**
+
+Windows (Command Prompt):
+```cmd
+type automint.log
+```
+
+Windows (PowerShell, real-time):
+```powershell
+Get-Content automint.log -Wait
+```
+
+Linux / macOS:
 ```bash
-automint [-h] [--url URL] [--contract CONTRACT] [--chain CHAIN]
-         [--rpc RPC] [--dry-run] [--wallet WALLET]
-         [--watch] [--watch-interval SEC]
+cat automint.log
+tail -f automint.log   # real-time
 ```
-
-| Argumen | Fungsi |
-|---|---|
-| `--url URL` | OpenSea collection URL (misal `https://opensea.io/collection/...`) |
-| `--contract CONTRACT` | NFT contract address langsung (`0x...`) |
-| `--chain CHAIN` | Paksa chain. Wajib kalo pake `--contract`. Contoh: `eth`, `base`, `polygon` |
-| `--rpc RPC` | Custom RPC URL. Override env & default |
-| `--dry-run` | Cek doang — detect + eligibility + estimate, gak kirim tx |
-| `--wallet WALLET` | Wallet index buat multi-account. Contoh: `--wallet 0` atau `--wallet all` buat batch |
-| `--watch` | Watch mode — poll contract tiap N detik, auto-mint begitu tier live |
-| `--watch-interval SEC` | Interval poll watch mode dalam detik (default: 15) |
-| `-h`, `--help` | Tampilkan help |
-
-Kalo gak ada `--url` atau `--contract`, CLI bakal minta input interaktif.
 
 ---
 
@@ -395,144 +574,158 @@ Kalo gak ada `--url` atau `--contract`, CLI bakal minta input interaktif.
 
 ```
 automint-cli/
-├── automint.py             # Entry point utama
-├── .env.example            # Template env variable
-├── .gitignore              # .env gak masuk git
-├── requirements.txt        # Dependency Python
-├── automint.log            # Log hasil mint (JSON lines)
-└── src/
-    ├── config.py           # Chain config, RPC multichain + fallback, env loader
-    ├── detect.py           # OpenSea scrape + on-chain detect + scheduled tier
-    ├── eligibility.py      # Cek whitelist, merkle, balance, gas estimate
-    ├── executor.py         # Build tx, sign, countdown, gas bump, send, receipt
-    ├── merkle.py           # Fetch Merkle proof dari API / env / cache
-    ├── notify.py           # Notifikasi Telegram + Discord webhook
-    └── display.py          # Rich CLI output (tables, panel, warna)
+│
+├── automint.py          # Entry point — alur utama CLI
+│
+├── src/
+│   ├── config.py        # Chain config, RPC fallback, env loader, gas guard
+│   ├── detect.py        # Detect NFT: OpenSea API + on-chain eth_call paralel
+│   ├── eligibility.py   # Cek whitelist, merkle proof, balance wallet
+│   ├── executor.py      # Build & sign tx, gas bump, sold-out check, kirim
+│   ├── merkle.py        # Fetch Merkle proof (API / .env / cache)
+│   ├── notify.py        # Notifikasi Telegram & Discord
+│   └── display.py       # Tampilan terminal (tabel, panel, warna)
+│
+├── test_config.py       # Unit test: config, RPC, wallet
+├── test_detect.py       # Unit test: detect, scrape, calldata
+├── test_core.py         # Unit test: executor, eligibility
+├── test_display.py      # Unit test: semua fungsi tampilan
+├── test_integration.py  # Integration test: flow lintas modul
+├── test_cli.py          # Black-box test: subprocess CLI
+│
+├── .env.example         # Template konfigurasi
+├── .env                 # Konfigurasi kamu (tidak masuk Git)
+├── .gitignore
+├── requirements.txt
+└── automint.log         # Log hasil mint (dibuat otomatis)
 ```
 
 ---
 
-## Log
+## Keamanan
 
-Semua hasil mint tercatat di `automint.log` (format JSON lines):
-
-```json
-{"timestamp": "2026-06-26 12:00:00 UTC", "chain": "ethereum", "contract": "0xbd35...", "tier": "Public", "price": 0.005, "status": "success", "tx_hash": "0xabc123..."}
-```
-
-Bisa dicek pake:
-```bash
-# Linux/Mac:
-cat automint.log
-tail -f automint.log
-
-# Windows:
-type automint.log
-# (gak ada real-time tail di CMD, pake PowerShell Get-Content -Wait automint.log)
-```
-
----
-
-## Peringatan Keamanan
-
-1. **Wallet khusus** — jangan pake wallet utama. Buat wallet baru khusus AutoMint.
-2. **Private key di `.env`** — jangan pernah commit ke GitHub. `.gitignore` udah configured.
-3. **Permission `.env`** (Linux/Mac) — harus 600 (`chmod 600 .env`). CLI warning kalo kebuka. Windows skip check ini.
-4. **Chain mismatch** — kalo custom RPC chainId gak cocok, CLI abort. Dana lo aman.
-5. **Multi-key support** — multiple wallet via `PRIVATE_KEYS=0x...,0x...` di `.env`. Pilih wallet index atau `all` untuk batch mint.
-6. **Test pake dry-run dulu** — sebelum beneran mint, jalankan `--dry-run` biar tau estimasi biaya.
-7. **Gas guard** — set `MAX_GAS_GWEI=50` di `.env` biar CLI abort otomatis kalo gas terlalu tinggi.
-
----
-
-## Fitur Lanjutan
-
-### Watch Mode
-Poll contract secara otomatis. Begitu tier live, langsung mint tanpa perlu pantau manual.
-
-```bash
-# Linux/Mac:
-automint --url https://opensea.io/collection/... --watch
-automint --url https://opensea.io/collection/... --watch --watch-interval 30
-
-# Windows:
-python automint.py --url https://opensea.io/collection/... --watch
-```
-
-CLI kirim notifikasi Telegram/Discord saat tier live (kalo dikonfigurasi).
-
-### Gas Guard
-Set batas maximum gas price. Mint di-abort otomatis kalo gas melebihi limit.
-
-```env
-# .env
-MAX_GAS_GWEI=50
-```
-
-### Merkle Proof (Allowlist)
-Contract dengan Merkle tree allowlist dideteksi otomatis. Proof di-fetch dari Highlight.xyz / Manifold API. Kalo gagal fetch otomatis, isi manual:
-
-```env
-# .env — pisah koma kalo lebih dari satu
-MERKLE_PROOF=0xabc...,0xdef...
-```
-
-### Notifikasi
-Dapat notif Telegram/Discord setiap mint selesai (sukses/gagal/pending).
-
-```env
-# .env
-TELEGRAM_BOT_TOKEN=1234567890:AAxxxxxx
-TELEGRAM_CHAT_ID=123456789
-DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
-```
-
-### RPC Fallback Otomatis
-Kalo RPC utama down, CLI otomatis coba fallback ke endpoint publik lain (Ankr, LlamaRPC, dll). Gak perlu setup manual.
+1. **Wallet khusus** — buat wallet baru khusus AutoMint. Jangan pakai wallet yang menyimpan aset utama.
+2. **Jaga private key** — file `.env` tidak pernah masuk Git (sudah ada di `.gitignore`). Jangan share file ini.
+3. **Kunci `.env`** (Linux/macOS) — jalankan `chmod 600 .env`. CLI akan peringatkan kalau permission terlalu terbuka.
+4. **Dry-run dulu** — selalu jalankan `--dry-run` sebelum mint beneran untuk cek estimasi biaya.
+5. **Gas guard** — set `MAX_GAS_GWEI` di `.env` untuk mencegah mint saat gas sedang mahal.
+6. **Chain mismatch** — kalau chain ID custom RPC tidak cocok, CLI otomatis abort. Dana aman.
 
 ---
 
 ## Troubleshooting
 
-### "API HTTP 401" atau "API HTTP 429"
-OpenSea rate limit kena (16 req/window tanpa API key). CLI otomatis retry 3x dengan backoff.
+### ✕ API HTTP 401 atau 429
+OpenSea rate limit. CLI otomatis retry 3x. Kalau masih gagal, daftar API key gratis:
 
-Kalo masih gagal, daftar API key gratis di https://docs.opensea.io/reference/api-keys lalu isi di `.env`:
+1. Buka https://docs.opensea.io/reference/api-keys
+2. Daftar dan ambil API key
+3. Tambahkan ke `.env`:
 ```env
 OPENSEA_API_KEY=your_key_here
 ```
 
-### ".env permission too open"
-**Linux/Mac:** Jalanin `chmod 600 .env`. Ketik `y` kalo mau lanjut (gak disarankan).
-**Windows:** Abaikan — permission check gak jalan di Windows.
+---
 
-### "Chain required with contract address"
-Contract address butuh `--chain`. Contoh: `automint --contract 0x... --chain base`.
+### ✕ .env file not found
+File konfigurasi belum dibuat.
 
-### "RPC not connected"
-Coba pake `--rpc https://eth-mainnet.g.alchemy.com/v2/xxx`. Atau set `RPC_ETH` di `.env`.
+**Windows:**
+```cmd
+copy .env.example .env
+notepad .env
+```
 
-### "Chain mismatch"
-Custom RPC chainId gak cocok sama chain. Cek URL RPC atau hapus `--rpc`.
+**Linux / macOS:**
+```bash
+cp .env.example .env
+nano .env
+```
 
-### "Transaction reverted"
-Kemungkinan: udah mint duluan, gak eligible pas real mint, atau contract pake method beda. Cek di explorer.
+---
 
-### "Insufficient balance"
-Top up wallet. Cek balance sama total cost di estimasi.
+### ✕ No wallets found
+`PRIVATE_KEY` belum diisi di `.env`. Buka `.env` dan isi:
+```env
+PRIVATE_KEY=0xprivatekeykamudisin...
+```
 
-### "Gas too high: X Gwei > MAX_GAS_GWEI=Y. Aborted."
-Gas price lagi tinggi. Naikin `MAX_GAS_GWEI` di `.env`, atau tunggu gas turun. Kalo pake `--watch`, CLI otomatis tunggu gas turun sebelum mint.
+---
 
-### "merkle proof required"
-Contract pake Merkle tree allowlist. Coba tunggu beberapa saat (proof di-fetch otomatis dari API). Kalo tetap gagal, isi `MERKLE_PROOF=0x...` di `.env` secara manual.
+### ✕ Chain required with contract address
+Kalau pakai `--contract`, wajib tambah `--chain`. Contoh:
 
-### "No reachable RPC for X"
-Semua endpoint publik down. Set `RPC_ETH` (atau chain lain) di `.env` pake Alchemy/Infura.
+**Windows:**
+```cmd
+python automint.py --contract 0xABC... --chain eth
+```
 
-### Gak tau harus ngapain?
-Tinggal:
-- **Linux/Mac:** `automint` enter, paste URL, enter, `y` enter.
-- **Windows:** `python automint.py` enter, paste URL, enter, `y` enter.
+**Linux / macOS:**
+```bash
+automint --contract 0xABC... --chain eth
+```
 
-Selesai.
+---
+
+### ✕ No reachable RPC for [chain]
+Semua endpoint publik tidak bisa dijangkau. Solusi: set RPC custom di `.env`:
+```env
+RPC_ETH=https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY
+```
+Daftar gratis di [Alchemy](https://www.alchemy.com) atau [Infura](https://infura.io).
+
+---
+
+### ✕ Chain mismatch
+Chain ID dari `--rpc` tidak cocok dengan `--chain` yang dipilih. Solusi: hapus `--rpc` atau pastikan URL RPC-nya benar untuk chain tersebut.
+
+---
+
+### ✕ Gas too high: X Gwei > MAX_GAS_GWEI=Y
+Gas sedang tinggi dan melebihi batas yang kamu set. Pilihan:
+- Tunggu gas turun, coba lagi nanti
+- Naikkan batas di `.env`: `MAX_GAS_GWEI=100`
+- Pakai `--watch` — CLI otomatis tunggu gas turun sebelum mint
+
+---
+
+### ✕ Transaction reverted
+Transaksi gagal di blockchain. Kemungkinan penyebab:
+- Sudah pernah mint sebelumnya
+- Tidak eligible saat eksekusi berlangsung
+- Contract sudah sold-out
+- Contract menggunakan method yang berbeda
+
+Cek detail di explorer menggunakan tx hash yang ditampilkan.
+
+---
+
+### ✕ Insufficient balance
+Saldo wallet tidak cukup untuk mint + gas. Top up wallet dan jalankan `--dry-run` untuk lihat estimasi biaya terbaru.
+
+---
+
+### ✕ merkle proof required
+Contract menggunakan Merkle tree allowlist. CLI sudah mencoba fetch otomatis tapi gagal. Isi proof manual di `.env`:
+```env
+MERKLE_PROOF=0xabc...,0xdef...
+```
+Proof bisa didapat dari Discord project atau website mint resmi.
+
+---
+
+### Tidak tahu mulai dari mana?
+
+**Windows** — buka Command Prompt, jalankan:
+```cmd
+venv\Scripts\activate
+python automint.py
+```
+Paste URL OpenSea → Enter → ikuti instruksi di layar.
+
+**Linux / macOS** — buka Terminal, jalankan:
+```bash
+source venv/bin/activate
+automint
+```
+Paste URL OpenSea → Enter → ikuti instruksi di layar.
